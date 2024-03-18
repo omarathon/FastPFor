@@ -269,7 +269,7 @@ SIMDNewPFor<BlockSizeInUnitsOfPackSize, ExceptionCoder>::decodeArray(
     in += encodedExceptionsSize;
 
     uint32_t *beginout(out); // we use this later
-    usimdunpack(reinterpret_cast<const __m128i *>(in), out, b);
+    usimdunpack(reinterpret_cast<const __m128i *>(in), out, b, NULL, NULL);
     in += 4 * b;
     out += 128;
 
