@@ -197,8 +197,11 @@ public:
   const uint32_t *decodeArray(const uint32_t *in, const size_t len,
                               uint32_t *out, size_t &nvalue) override {
     nvalue = *in++;
-    if (nvalue == 0)
+    if (nvalue == 0) {
+      printf("wtf\n");
       return in;
+    }
+      
 #ifndef NDEBUG
     const uint32_t *const initin = in;
 #endif
@@ -225,12 +228,16 @@ public:
     assert(in <= finalin);
     nvalue = totalnvalue;
 
-    uint64_t sum = _mm_extract_epi64(sum_lo, 0) + _mm_extract_epi64(sum_lo, 1) +
-                        _mm_extract_epi64(sum_hi, 0) + _mm_extract_epi64(sum_hi, 1);
+    int64_t sum = static_cast<int64_t>(_mm_extract_epi64(sum_lo, 0) + _mm_extract_epi64(sum_lo, 1) +
+                        _mm_extract_epi64(sum_hi, 0) + _mm_extract_epi64(sum_hi, 1));
     sum += delta_sum; // Correct exceptions
 
-    initout[nvalue] = static_cast<int32_t>(sum & 0xFFFFFFFF); // Lower 32 bits of sum
-    initout[nvalue + 1] = static_cast<int32_t>(sum >> 32);    // Higher 32 bits of sum
+    printf("sum %lld\n", sum);
+
+    initout[nvalue] = static_cast<uint32_t>(static_cast<uint64_t>(sum) & 0xFFFFFFFF); // Lower 32 bits of sum
+    initout[nvalue + 1] = static_cast<uint32_t>(static_cast<uint64_t>(sum) >> 32);    // Higher 32 bits of sum
+
+    printf("sum simdpfor %d\n", sum);
 
     return in;
   }

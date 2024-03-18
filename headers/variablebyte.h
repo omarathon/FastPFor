@@ -207,7 +207,9 @@ class VariableByte : public IntegerCODEC {
       return inbyte;  // abort
     }
     const uint8_t *const endbyte = inbyte + length;
-    const T *const initout(out);
+    T *initout(out);
+
+    uint64_t sum = 0;
     // this assumes that there is a value to be read
 
     while (endbyte > inbyte + 10) {
@@ -219,6 +221,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 1;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -227,6 +230,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 2;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -235,6 +239,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 3;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -243,6 +248,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 4;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -251,6 +257,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 5;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -259,6 +266,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 6;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -267,6 +275,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 7;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -275,6 +284,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 8;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -283,6 +293,7 @@ class VariableByte : public IntegerCODEC {
       if (c >= 128) {
         inbyte += 9;
         *out++ = v;
+        sum += v;
         continue;
       }
 
@@ -290,6 +301,7 @@ class VariableByte : public IntegerCODEC {
       inbyte += 10;
       v |= static_cast<uint64_t>(c & 0x1) << 63;
       *out++ = v;
+      sum += v;
     }
 
     while (endbyte > inbyte) {
@@ -299,11 +311,18 @@ class VariableByte : public IntegerCODEC {
         v += ((c & 127) << shift);
         if ((c & 128)) {
           *out++ = v;
+          sum += v;
           break;
         }
       }
     }
     nvalue = out - initout;
+
+    printf("sum variable byte %d\n", sum);
+
+    initout[nvalue] = static_cast<uint32_t>(sum & 0xFFFFFFFF); // Lower 32 bits of sum
+    initout[nvalue + 1] = static_cast<uint32_t>(sum >> 32);    // Higher 32 bits of sum
+
     return inbyte;
   }
 

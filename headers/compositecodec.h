@@ -80,13 +80,16 @@ class CompositeCodec : public IntegerCODEC {
       return in;
     }
     const uint32_t *const initin(in);
+    IntType *initout(out);
     size_t mynvalue1 = nvalue;
     const uint32_t *in2 = codec1.decodeArray(in, length, out, mynvalue1);
     if (length + in > in2) {
       if (nvalue <= mynvalue1) {
         throw std::logic_error("Buffer contains more data than requested!");
       }
+      uint64_t sum1 = (initout[mynvalue1 + 1] << 32) | initout[mynvalue1];
       size_t nvalue2 = nvalue - mynvalue1;
+      IntType *initout2(out);   
       const uint32_t *in3 = codec2.decodeArray(in2, length - (in2 - in),
                                                out + mynvalue1, nvalue2);
       nvalue = mynvalue1 + nvalue2;
@@ -94,6 +97,12 @@ class CompositeCodec : public IntegerCODEC {
         throw std::logic_error(
             "Decode run over output buffer. Potential buffer overflow!");
       }
+      uint64_t sum2 = ((initout2 + mynvalue1)[nvalue2 + 1] << 32) | (initout2 + mynvalue1)[nvalue2];
+      uint64_t sum = sum1 + sum2;
+
+      initout[nvalue] = static_cast<uint32_t>(sum & 0xFFFFFFFF); // Lower 32 bits of sum
+      initout[nvalue + 1] = static_cast<uint32_t>(sum >> 32);    // Higher 32 bits of sum
+
       return in3;
     }
     nvalue = mynvalue1;
