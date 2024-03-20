@@ -94,7 +94,7 @@ public:
     out.resize((size + 32 - 1) / 32 * 32);
     uint32_t j = 0;
     for (; j + 128 <= size; j += 128) {
-      usimdunpack(reinterpret_cast<const __m128i *>(in), &out[j], bit, NULL, NULL);
+      usimdunpack(reinterpret_cast<const __m128i *>(in), &out[j], bit);
       in += 4 * bit;
     }
     for (; j + 31 < size; j += 32) {
@@ -546,7 +546,7 @@ public:
       const uint8_t cexcept = *bytep++;
       // in = unpackblock<BlockSize>(in, out, b);
       assert(BlockSize == 128);
-      usimdunpack(reinterpret_cast<const __m128i *>(in), out, b, NULL, NULL);
+      usimdunpack(reinterpret_cast<const __m128i *>(in), out, b);
       in += BlockSizeInUnitsOfPackSize * b;
       for (uint32_t k = 0; k < cexcept; ++k) {
         const uint8_t pos = *(bytep++);

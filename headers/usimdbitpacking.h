@@ -16,7 +16,7 @@ void usimdpack(const uint32_t *__restrict__ in, __m128i *__restrict__ out,
 void usimdpackwithoutmask(const uint32_t *__restrict__ in,
                           __m128i *__restrict__ out, uint32_t bit);
 void usimdunpack(const __m128i *__restrict__ in, uint32_t *__restrict__ out,
-                 uint32_t bit, __m128i *__restrict__ sum_lo, __m128i *__restrict__ sum_hi);
+                 uint32_t bit);
 
 } // namespace FastPForLib
 

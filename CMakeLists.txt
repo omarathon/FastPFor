@@ -123,6 +123,7 @@ add_library(FastPFOR STATIC
     src/bitpackingunaligned.cpp
     src/horizontalbitpacking.cpp
     src/simdunalignedbitpacking.cpp
+    src/simdunalignedbitpacking_new.cpp
     src/codecfactory.cpp
     src/simdbitpacking.cpp
     src/varintdecode.c
