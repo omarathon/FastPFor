@@ -318,8 +318,6 @@ class VariableByte : public IntegerCODEC {
     }
     nvalue = out - initout;
 
-    printf("sum variable byte %d\n", sum);
-
     initout[nvalue] = static_cast<uint32_t>(sum & 0xFFFFFFFF); // Lower 32 bits of sum
     initout[nvalue + 1] = static_cast<uint32_t>(sum >> 32);    // Higher 32 bits of sum
 
