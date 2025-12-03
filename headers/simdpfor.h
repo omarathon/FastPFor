@@ -228,8 +228,15 @@ public:
     assert(in <= finalin);
     nvalue = totalnvalue;
 
-    int64_t sum = static_cast<int64_t>(_mm_extract_epi64(sum_lo, 0) + _mm_extract_epi64(sum_lo, 1) +
-                        _mm_extract_epi64(sum_hi, 0) + _mm_extract_epi64(sum_hi, 1));
+    __m128i s = sum_lo;
+
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1,0,3,2)));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2,3,0,1)));
+
+    uint64_t sum = (uint32_t)_mm_cvtsi128_si32(s);
+
+    // int64_t sum = static_cast<int64_t>(_mm_extract_epi64(sum_lo, 0) + _mm_extract_epi64(sum_lo, 1) +
+                        // _mm_extract_epi64(sum_hi, 0) + _mm_extract_epi64(sum_hi, 1));
     sum += delta_sum; // Correct exceptions
     initout[nvalue] = static_cast<uint32_t>(static_cast<uint64_t>(sum) & 0xFFFFFFFF); // Lower 32 bits of sum
     initout[nvalue + 1] = static_cast<uint32_t>(static_cast<uint64_t>(sum) >> 32);    // Higher 32 bits of sum
