@@ -13,6 +13,7 @@
 #include "usimdbitpacking_new.h"
 #include "usimdbitpacking_new.h"
 #include "util.h"
+#include <iostream>
 
 namespace FastPForLib {
 
@@ -209,7 +210,7 @@ public:
     size_t totalnvalue(0);
     __m128i sum_lo = _mm_setzero_si128();
     __m128i sum_hi = _mm_setzero_si128();
-    int64_t delta_sum = 0;
+    int32_t delta_sum = 0;
     uint32_t* initout = out;
     while (totalnvalue < nvalue) {
       size_t thisnvalue = nvalue - totalnvalue;
@@ -237,6 +238,10 @@ public:
 
     // int64_t sum = static_cast<int64_t>(_mm_extract_epi64(sum_lo, 0) + _mm_extract_epi64(sum_lo, 1) +
                         // _mm_extract_epi64(sum_hi, 0) + _mm_extract_epi64(sum_hi, 1));
+
+    std::cout << "sum " << sum << std::endl;
+    std::cout << "delta_sum " << delta_sum << std::endl;
+
     sum += delta_sum; // Correct exceptions
     initout[nvalue] = static_cast<uint32_t>(static_cast<uint64_t>(sum) & 0xFFFFFFFF); // Lower 32 bits of sum
     initout[nvalue + 1] = static_cast<uint32_t>(static_cast<uint64_t>(sum) >> 32);    // Higher 32 bits of sum
@@ -277,7 +282,7 @@ public:
 #else
   const uint32_t *__decodeArray(const uint32_t *in, const size_t,
 #endif
-                                uint32_t *out, size_t &nvalue, __m128i* sum_lo, __m128i* sum_hi, int64_t* delta_sum) {
+                                uint32_t *out, size_t &nvalue, __m128i* sum_lo, __m128i* sum_hi, int32_t* delta_sum) {
 #ifndef NDEBUG
     const uint32_t *const initin(in);
 #endif
@@ -313,12 +318,12 @@ public:
           &i, // i points to value of the first exception
       const DATATYPE *__restrict__ end_exception,
       size_t next_exception // points to the position of the first exception
-      , __m128i* sum_lo, __m128i* sum_hi, int64_t* delta_sum) {
+      , __m128i* sum_lo, __m128i* sum_hi, int32_t* delta_sum) {
     unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum_lo, sum_hi);
     for (size_t cur = next_exception; i != end_exception;
          cur = next_exception) {
       next_exception = cur + static_cast<size_t>(outputbegin[cur]) + 1;
-      *delta_sum += (-outputbegin[cur] + (*i));
+      *delta_sum += (-(int32_t)outputbegin[cur] + (int32_t)(*i));
       outputbegin[cur] = *(i++);
     }
   }
