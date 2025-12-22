@@ -8929,29 +8929,28 @@ static void __SIMD_fastpack16_32(const uint32_t *__restrict__ _in,
 static void aggregate_sums(__m128i OutReg, __m128i* sum_lo) {
     *sum_lo = _mm_add_epi32(*sum_lo, OutReg);
 
-    // Fast reject: most SIMD regs have no exceptions
-    if (g_exc == g_end_exception ||
-        g_cur_exception < g_base_index ||
-        g_cur_exception >= g_base_index + 4) {
-        g_base_index += 4;
-        return;
-    }
+    // if (g_exc == g_end_exception ||
+    //     g_cur_exception < g_base_index ||
+    //     g_cur_exception >= g_base_index + 4) {
+    //     g_base_index += 4;
+    //     return;
+    // }
 
-    // Process all exceptions in this SIMD register
-    while (g_exc != g_end_exception &&
-           g_cur_exception >= g_base_index &&
-           g_cur_exception < g_base_index + 4) {
+    // while (g_exc != g_end_exception &&
+    //        g_cur_exception >= g_base_index &&
+    //        g_cur_exception < g_base_index + 4) {
 
-        const int lane = static_cast<int>(g_cur_exception - g_base_index);
-        const uint32_t gap =
-            static_cast<uint32_t>(_mm_extract_epi32(OutReg, lane));
+    //     const int lane = int(g_cur_exception - g_base_index);
+    //     const uint32_t truncated =
+    //         uint32_t(_mm_extract_epi32(OutReg, lane));
 
-        *g_delta_sum += (*g_exc - gap);
-        g_cur_exception += gap + 1;
-        ++g_exc;
-    }
+    //     *g_delta_sum += (*g_exc - truncated);
 
-    g_base_index += 4;
+    //     ++g_cur_exception;   // ✅ NOT gap-based
+    //     ++g_exc;
+    // }
+
+    // g_base_index += 4;
 }
 
 /*
@@ -14868,13 +14867,8 @@ void usimdunpack_new(const __m128i *__restrict__ in, uint32_t *__restrict__ out,
                  const uint32_t bit, __m128i* sum_lo) {
   using namespace simdunaligned_new;
   switch (bit) {
-  case 0: {
-    __m128i zero = _mm_setzero_si128();
-    for (int i = 0; i < 32; ++i) {
-        aggregate_sums(zero, sum_lo);
-    }
+  case 0:
     return;
-  }
 
   case 1:
     __SIMD_fastunpack1_32(in, out, sum_lo);

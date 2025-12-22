@@ -232,7 +232,7 @@ public:
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1,0,3,2)));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2,3,0,1)));
 
-    uint64_t sum = (uint32_t)_mm_cvtsi128_si32(s);
+    int32_t sum = (uint32_t)_mm_cvtsi128_si32(s);
 
     sum += delta_sum; // Correct exceptions
     initout[nvalue] = static_cast<uint32_t>(sum);
@@ -300,6 +300,33 @@ public:
     assert(initin + len >= endexceptpointer);
     return endexceptpointer;
   }
+  
+  static inline uint32_t get_unpacked_at_bitplane32(
+    const uint32_t* __restrict__ inputbegin,
+    size_t pos,
+    uint32_t b)
+  {
+      if (b == 32) {
+          // In your encoder, b==32 stores raw 32-bit words (no bitpacking)
+          return inputbegin[pos];
+      }
+      if (b == 0) {
+          return 0;
+      }
+
+      const size_t group  = pos >> 5;      // / 32, group in [0..3]
+      const uint32_t lane = (uint32_t)(pos & 31); // % 32, bit index inside each bitplane word
+
+      const uint32_t* base = inputbegin + group * (size_t)b; // b words for this group
+      uint32_t v = 0;
+
+      // Rebuild value from bitplanes: bit j is in base[j] at position 'lane'
+      for (uint32_t j = 0; j < b; ++j) {
+          v |= ((base[j] >> lane) & 1u) << j;
+      }
+      return v;
+  }
+
   void uncompressblockPFOR(
     const uint32_t
       *__restrict__ inputbegin, // points to the first packed word
@@ -311,24 +338,22 @@ public:
     size_t next_exception // points to the position of the first exception
     , __m128i* sum_lo, int32_t* delta_sum)
   {
-    // Initialise global exception state
-    if (next_exception < BlockSize) {
-        g_cur_exception = next_exception;
-    } else {
-        g_cur_exception = BlockSize; // no exceptions in this block
-    }
-    g_exc            = i;
-    g_end_exception  = end_exception;
-    g_delta_sum      = delta_sum;
-    g_base_index     = 0;
-
     unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum_lo);
 
-    assert(g_cur_exception == BlockSize || g_exc == g_end_exception);
+    if (i == end_exception) return;
 
-    // Update caller-visible exception pointer
-    i = g_exc;
-  }
+    size_t cur = next_exception;
+    while (i != end_exception) {
+        // This must match what unpackblock would have produced at outputbegin[cur]
+        const uint32_t unpacked_at_cur = get_unpacked_at_bitplane32(inputbegin, cur, b);
+
+        const uint32_t full_val = (uint32_t)(*i++);
+        *delta_sum += (int32_t)full_val - (int32_t)unpacked_at_cur;
+
+        // Same rule as original decoder: next = cur + output[cur] + 1
+        cur = cur + (size_t)unpacked_at_cur + 1;
+    }
+}
 
   virtual std::string name() const override {
     return "SIMDPFor";
