@@ -14868,21 +14868,13 @@ void usimdunpack_new(const __m128i *__restrict__ in, uint32_t *__restrict__ out,
                  const uint32_t bit, __m128i* sum_lo) {
   using namespace simdunaligned_new;
   switch (bit) {
-  case 0:
-    SIMD_nullunpacker32(in, out);
-    // Explicit exception handling (gap == 0)
-    while (g_exc != g_end_exception) {
-
-      *g_delta_sum += *g_exc;   // gap = 0
-      g_cur_exception += 1;
-      ++g_exc;
+  case 0: {
+    __m128i zero = _mm_setzero_si128();
+    for (int i = 0; i < 32; ++i) {
+        aggregate_sums(zero, sum_lo);
     }
-
-    // IMPORTANT: disable exception position after block
-    g_cur_exception = 128;
-
-    g_base_index += 128;
     return;
+  }
 
   case 1:
     __SIMD_fastunpack1_32(in, out, sum_lo);
