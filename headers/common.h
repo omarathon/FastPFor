@@ -60,4 +60,13 @@
 #define __restrict__ __restrict
 #endif
 
+// Exception decoding state
+static size_t g_cur_exception;
+static const uint32_t* g_exc;
+static const uint32_t* g_end_exception;
+static int32_t* g_delta_sum;
+
+// Global index of the next decoded value
+static uint32_t g_base_index;
+
 #endif /* COMMON_H_ */
