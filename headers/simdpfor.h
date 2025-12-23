@@ -311,23 +311,7 @@ public:
     size_t next_exception // points to the position of the first exception
     , __m128i* sum_lo, int32_t* delta_sum)
   {
-    // Initialise global exception state
-    if (next_exception < BlockSize) {
-        g_cur_exception = next_exception;
-    } else {
-        g_cur_exception = BlockSize; // no exceptions in this block
-    }
-    g_exc            = i;
-    g_end_exception  = end_exception;
-    g_delta_sum      = delta_sum;
-    g_base_index     = 0;
-
     unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum_lo);
-
-    assert(g_cur_exception == BlockSize || g_exc == g_end_exception);
-
-    // Update caller-visible exception pointer
-    i = g_exc;
   }
 
   virtual std::string name() const override {

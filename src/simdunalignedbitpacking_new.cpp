@@ -8928,62 +8928,7 @@ static void __SIMD_fastpack16_32(const uint32_t *__restrict__ _in,
 
 static void aggregate_sums(__m128i OutReg, __m128i* sum_lo) {
     *sum_lo = _mm_add_epi32(*sum_lo, OutReg);
-
-    // Fast reject: most SIMD regs have no exceptions
-    if (g_exc == g_end_exception ||
-        g_cur_exception < g_base_index ||
-        g_cur_exception >= g_base_index + 4) {
-        g_base_index += 4;
-        return;
-    }
-
-    // Process all exceptions in this SIMD register
-    while (g_exc != g_end_exception &&
-           g_cur_exception >= g_base_index &&
-           g_cur_exception < g_base_index + 4) {
-
-        const int lane = static_cast<int>(g_cur_exception - g_base_index);
-        const uint32_t gap =
-            static_cast<uint32_t>(_mm_extract_epi32(OutReg, lane));
-
-        *g_delta_sum += (*g_exc - gap);
-        g_cur_exception += gap + 1;
-        ++g_exc;
-    }
-
-    g_base_index += 4;
 }
-
-/*
-static void aggregate_sums(__m128i OutReg, __m128i* sum_lo) {
-  *sum_lo = _mm_add_epi32(*sum_lo, OutReg);
-
-  if (g_exc == g_end_exception ||
-      g_cur_exception < g_base_index ||
-      g_cur_exception >= g_base_index + 4) {
-      g_base_index += 4;
-      return;
-  }
-
-  while (g_exc != g_end_exception &&
-          g_cur_exception >= g_base_index &&
-          g_cur_exception < g_base_index + 4) {
-
-      const int lane = static_cast<int>(g_cur_exception - g_base_index);
-      const uint32_t truncated =
-          static_cast<uint32_t>(_mm_extract_epi32(OutReg, lane));
-
-      // Correct sum: replace truncated with exception
-      *g_delta_sum += (*g_exc - truncated);
-
-      // Advance to next exception (NOT gap-based!)
-      ++g_cur_exception;
-      ++g_exc;
-  }
-
-  g_base_index += 4;
-}
-*/
 
 static void __SIMD_fastunpack1_32(const __m128i *in, uint32_t *_out, __m128i* sum_lo) {
   __m128i *out = reinterpret_cast<__m128i *>(_out);
@@ -14869,19 +14814,7 @@ void usimdunpack_new(const __m128i *__restrict__ in, uint32_t *__restrict__ out,
   using namespace simdunaligned_new;
   switch (bit) {
   case 0:
-    SIMD_nullunpacker32(in, out);
-    // Explicit exception handling (gap == 0)
-    while (g_exc != g_end_exception) {
-
-      *g_delta_sum += *g_exc;   // gap = 0
-      g_cur_exception += 1;
-      ++g_exc;
-    }
-
-    // IMPORTANT: disable exception position after block
-    g_cur_exception = 128;
-
-    g_base_index += 128;
+    /* SIMD_nullunpacker32(in, out); */
     return;
 
   case 1:
