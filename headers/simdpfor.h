@@ -13,6 +13,14 @@
 #include "usimdbitpacking_new.h"
 #include "usimdbitpacking_new.h"
 #include "util.h"
+#include "decoding_state.h"
+
+size_t g_decoding_idx = 0;
+size_t g_next_exception_idx = 0;
+int32_t g_delta_sum = 0;
+
+const uint32_t *__restrict__ g_i = nullptr;
+const uint32_t *__restrict__ g_end_exception = nullptr;
 
 namespace FastPForLib {
 
@@ -166,8 +174,8 @@ public:
     usimdpack(source, reinterpret_cast<__m128i *>(out), bit);
   }
 
-  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m128i* sum_lo) {
-    usimdunpack_new(reinterpret_cast<const __m128i *>(source), out, bit, sum_lo);
+  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m128i* sum) {
+    usimdunpack_new(reinterpret_cast<const __m128i *>(source), out, bit, sum);
   }
 
   void encodeArray(const uint32_t *in, const size_t len, uint32_t *out,
@@ -207,7 +215,7 @@ public:
 #endif
     const uint32_t *const finalin = in + len;
     size_t totalnvalue(0);
-    __m128i sum_lo = _mm_setzero_si128();
+    __m128i sum = _mm_setzero_si128();
     int32_t delta_sum = 0;
     uint32_t* initout = out;
     while (totalnvalue < nvalue) {
@@ -216,7 +224,7 @@ public:
       const uint32_t *const befin(in);
 #endif
       assert(finalin <= len + in);
-      in = __decodeArray(in, finalin - in, out, thisnvalue, &sum_lo, &delta_sum);
+      in = __decodeArray(in, finalin - in, out, thisnvalue, &sum, &delta_sum);
       assert(in > befin);
       assert(in <= finalin);
       out += thisnvalue;
@@ -227,15 +235,11 @@ public:
     assert(in <= finalin);
     nvalue = totalnvalue;
 
-    __m128i s = sum_lo;
-
+    __m128i s = sum;
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1,0,3,2)));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2,3,0,1)));
-
-    uint64_t sum = (uint32_t)_mm_cvtsi128_si32(s);
-
-    sum += delta_sum; // Correct exceptions
-    initout[nvalue] = static_cast<uint32_t>(sum);
+    const auto out_sum = (uint32_t)(_mm_cvtsi128_si32(s) + delta_sum /* correct exceptions */);
+    initout[nvalue] = out_sum;
 
     return in;
   }
@@ -273,7 +277,7 @@ public:
 #else
   const uint32_t *__decodeArray(const uint32_t *in, const size_t,
 #endif
-                                uint32_t *out, size_t &nvalue, __m128i* sum_lo, int32_t* delta_sum) {
+                                uint32_t *out, size_t &nvalue, __m128i* sum, int32_t* delta_sum) {
 #ifndef NDEBUG
     const uint32_t *const initin(in);
 #endif
@@ -292,7 +296,7 @@ public:
       const uint32_t firstexcept = *headerin & firstexceptmask;
       const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
       endexceptpointer = initexcept + exceptindex;
-      uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept, sum_lo, delta_sum);
+      uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept, sum, delta_sum);
       in += (BlockSize * b) / 32;
       out += BlockSize;
     }
@@ -309,9 +313,22 @@ public:
         &i, // i points to value of the first exception
     const DATATYPE *__restrict__ end_exception,
     size_t next_exception // points to the position of the first exception
-    , __m128i* sum_lo, int32_t* delta_sum)
+    , __m128i* sum, int32_t* delta_sum)
   {
-    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum_lo);
+    // init decoding state
+    g_decoding_idx = 0;
+    g_next_exception_idx = next_exception;
+    g_delta_sum = 0;
+    g_i = i;
+    g_end_exception = end_exception;
+
+    // decode block
+    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum);
+
+    // propagate end decoding state
+    next_exception = g_next_exception_idx;
+    i = end_exception;
+    *delta_sum += g_delta_sum;
   }
 
   virtual std::string name() const override {
