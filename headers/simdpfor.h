@@ -166,8 +166,8 @@ public:
     usimdpack(source, reinterpret_cast<__m128i *>(out), bit);
   }
 
-  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m128i* sum_lo, __m128i* sum_hi) {
-    usimdunpack_new(reinterpret_cast<const __m128i *>(source), out, bit, sum_lo, sum_hi);
+  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m128i* sum_lo) {
+    usimdunpack_new(reinterpret_cast<const __m128i *>(source), out, bit, sum_lo);
   }
 
   void encodeArray(const uint32_t *in, const size_t len, uint32_t *out,
@@ -208,8 +208,7 @@ public:
     const uint32_t *const finalin = in + len;
     size_t totalnvalue(0);
     __m128i sum_lo = _mm_setzero_si128();
-    __m128i sum_hi = _mm_setzero_si128();
-    int64_t delta_sum = 0;
+    int32_t delta_sum = 0;
     uint32_t* initout = out;
     while (totalnvalue < nvalue) {
       size_t thisnvalue = nvalue - totalnvalue;
@@ -217,7 +216,7 @@ public:
       const uint32_t *const befin(in);
 #endif
       assert(finalin <= len + in);
-      in = __decodeArray(in, finalin - in, out, thisnvalue, &sum_lo, &sum_hi, &delta_sum);
+      in = __decodeArray(in, finalin - in, out, thisnvalue, &sum_lo, &delta_sum);
       assert(in > befin);
       assert(in <= finalin);
       out += thisnvalue;
@@ -233,13 +232,9 @@ public:
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1,0,3,2)));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2,3,0,1)));
 
-    uint64_t sum = (uint32_t)_mm_cvtsi128_si32(s);
+    const auto sum = (int32_t)_mm_cvtsi128_si32(s) + delta_sum; // Correct exceptions
 
-    // int64_t sum = static_cast<int64_t>(_mm_extract_epi64(sum_lo, 0) + _mm_extract_epi64(sum_lo, 1) +
-                        // _mm_extract_epi64(sum_hi, 0) + _mm_extract_epi64(sum_hi, 1));
-    sum += delta_sum; // Correct exceptions
-    initout[nvalue] = static_cast<uint32_t>(static_cast<uint64_t>(sum) & 0xFFFFFFFF); // Lower 32 bits of sum
-    initout[nvalue + 1] = static_cast<uint32_t>(static_cast<uint64_t>(sum) >> 32);    // Higher 32 bits of sum
+    initout[nvalue] = static_cast<uint32_t>(sum);
 
     return in;
   }
@@ -277,7 +272,7 @@ public:
 #else
   const uint32_t *__decodeArray(const uint32_t *in, const size_t,
 #endif
-                                uint32_t *out, size_t &nvalue, __m128i* sum_lo, __m128i* sum_hi, int64_t* delta_sum) {
+                                uint32_t *out, size_t &nvalue, __m128i* sum_lo, int32_t* delta_sum) {
 #ifndef NDEBUG
     const uint32_t *const initin(in);
 #endif
@@ -296,7 +291,7 @@ public:
       const uint32_t firstexcept = *headerin & firstexceptmask;
       const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
       endexceptpointer = initexcept + exceptindex;
-      uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept, sum_lo, sum_hi, delta_sum);
+      uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept, sum_lo, delta_sum);
       in += (BlockSize * b) / 32;
       out += BlockSize;
     }
@@ -313,13 +308,13 @@ public:
           &i, // i points to value of the first exception
       const DATATYPE *__restrict__ end_exception,
       size_t next_exception // points to the position of the first exception
-      , __m128i* sum_lo, __m128i* sum_hi, int64_t* delta_sum) {
-    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum_lo, sum_hi);
+      , __m128i* sum_lo, int32_t* delta_sum) {
+    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum_lo);
     for (size_t cur = next_exception; i != end_exception;
          cur = next_exception) {
       next_exception = cur + static_cast<size_t>(outputbegin[cur]) + 1;
       *delta_sum += (-outputbegin[cur] + (*i));
-      outputbegin[cur] = *(i++);
+      i++;
     }
   }
 

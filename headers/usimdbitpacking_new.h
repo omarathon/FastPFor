@@ -12,7 +12,7 @@
 namespace FastPForLib {
 
 void usimdunpack_new(const __m128i *__restrict__ in, uint32_t *__restrict__ out,
-                 uint32_t bit, __m128i *__restrict__ sum_lo, __m128i *__restrict__ sum_hi);
+                 uint32_t bit, __m128i *__restrict__ sum_lo);
 
 } // namespace FastPForLib
 
