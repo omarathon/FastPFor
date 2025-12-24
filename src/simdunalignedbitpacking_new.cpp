@@ -8932,36 +8932,35 @@ static void __SIMD_fastpack16_32(const uint32_t *__restrict__ _in,
   }
 }
 
-static inline uint32_t extract_and_replace(__m128i* v, size_t idx, uint32_t newval) {
-    uint32_t old;
+static inline void replace(__m128i* v, size_t idx, uint32_t newval) {
     switch (idx) {
         case 0:
-            old = (uint32_t)_mm_extract_epi32(*v, 0);
             *v  = _mm_insert_epi32(*v, newval, 0);
             break;
         case 1:
-            old = (uint32_t)_mm_extract_epi32(*v, 1);
             *v  = _mm_insert_epi32(*v, newval, 1);
             break;
         case 2:
-            old = (uint32_t)_mm_extract_epi32(*v, 2);
             *v  = _mm_insert_epi32(*v, newval, 2);
             break;
         case 3:
-            old = (uint32_t)_mm_extract_epi32(*v, 3);
             *v  = _mm_insert_epi32(*v, newval, 3);
             break;
         default:
             __builtin_unreachable();
     }
-    return old;
 }
 
-static inline void correct_exceptions(__m128i* OutReg) {
-  if (g_i == g_end_exception || (g_next_exception_idx - g_decoding_idx) >= 4) {
+// NB: special-case of this logic is manually added to SIMD_nullunpacker32
+static inline void aggregate_sums(__m128i OutReg, __m128i* sum) {
+    if (g_i == g_end_exception || (g_next_exception_idx - g_decoding_idx) >= 4) {
+      *sum = _mm_add_epi32(*sum, OutReg);
       g_decoding_idx += 4;
       return;
     }
+
+    alignas(16) uint32_t lanes[4];
+    _mm_store_si128((__m128i*)lanes, OutReg);
 
     while (g_i != g_end_exception) {
         const size_t dist = g_next_exception_idx - g_decoding_idx;
@@ -8969,22 +8968,16 @@ static inline void correct_exceptions(__m128i* OutReg) {
         if (dist >= 4)
             break;
 
+        const uint32_t gap = lanes[dist];
         const uint32_t exc = *(g_i++);
 
-        // swap OutReg[dist] with the exception value `exc`
-        // (it currently contains the `gap`, needed to advance the exception state)
-        const uint32_t gap = extract_and_replace(OutReg, dist, exc);
-        
-        // advance exception state
+        replace(&OutReg, dist, exc);
+
         g_next_exception_idx += gap + 1;
     }
 
     g_decoding_idx += 4;
-}
 
-// NB: special-case of this logic is manually added to SIMD_nullunpacker32
-static inline void aggregate_sums(__m128i OutReg, __m128i* sum) {
-    correct_exceptions(&OutReg);
     *sum = _mm_add_epi32(*sum, OutReg);
 }
 
