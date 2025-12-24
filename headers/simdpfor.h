@@ -197,6 +197,7 @@ public:
   }
   const uint32_t *decodeArray(const uint32_t *in, const size_t len,
                               uint32_t *out, size_t &nvalue) override {
+    (void)out;
     nvalue = *in++;
     if (nvalue == 0) {
       return in;
@@ -216,7 +217,7 @@ public:
       const uint32_t *const befin(in);
 #endif
       assert(finalin <= len + in);
-      in = __decodeArray(in, finalin - in, out, thisnvalue, &sum_lo, &delta_sum);
+      in = __decodeArray(in, finalin - in, thisnvalue, &sum_lo, &delta_sum);
       assert(in > befin);
       assert(in <= finalin);
       out += thisnvalue;
@@ -272,7 +273,7 @@ public:
 #else
   const uint32_t *__decodeArray(const uint32_t *in, const size_t,
 #endif
-                                uint32_t *out, size_t &nvalue, __m128i* sum_lo, int32_t* delta_sum) {
+                                size_t &nvalue, __m128i* sum_lo, int32_t* delta_sum) {
 #ifndef NDEBUG
     const uint32_t *const initin(in);
 #endif
@@ -285,6 +286,7 @@ public:
     const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
     const DATATYPE *endexceptpointer = except;
     const DATATYPE *const initexcept(except);
+    uint32_t out[BlockSize];
     for (size_t k = 0; k < nvalue / BlockSize; ++k) {
       const uint32_t *const headerin(in);
       ++in;
@@ -293,7 +295,6 @@ public:
       endexceptpointer = initexcept + exceptindex;
       uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept, sum_lo, delta_sum);
       in += (BlockSize * b) / 32;
-      out += BlockSize;
     }
     assert(initin + len >= in);
     assert(initin + len >= endexceptpointer);
