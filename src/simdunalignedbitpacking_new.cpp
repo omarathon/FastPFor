@@ -8932,6 +8932,16 @@ static void __SIMD_fastpack16_32(const uint32_t *__restrict__ _in,
   }
 }
 
+static inline uint32_t extract_lane(__m128i v, size_t idx) {
+    switch (idx) {
+        case 0: return (uint32_t)_mm_extract_epi32(v, 0);
+        case 1: return (uint32_t)_mm_extract_epi32(v, 1);
+        case 2: return (uint32_t)_mm_extract_epi32(v, 2);
+        case 3: return (uint32_t)_mm_extract_epi32(v, 3);
+        default: __builtin_unreachable();
+    }
+}
+
 // NB: special-case of this logic is manually added to SIMD_nullunpacker32
 static inline void aggregate_sums(__m128i OutReg, __m128i* sum) {
     *sum = _mm_add_epi32(*sum, OutReg);
@@ -8941,16 +8951,13 @@ static inline void aggregate_sums(__m128i OutReg, __m128i* sum) {
       return;
     }
 
-    alignas(16) uint32_t lanes[4];
-    _mm_store_si128((__m128i*)lanes, OutReg);
-
     while (g_i != g_end_exception) {
         const size_t dist = g_next_exception_idx - g_decoding_idx;
 
         if (dist >= 4)
             break;
 
-        const uint32_t gap = lanes[dist];
+        const uint32_t gap = extract_lane(OutReg, dist);
         const uint32_t exc = *(g_i++);
         g_delta_sum += (int32_t)exc - (int32_t)gap;
         g_next_exception_idx += gap + 1;
