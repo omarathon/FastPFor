@@ -353,7 +353,7 @@ public:
       const size_t next_elem = next_exception >> 2;
       const uint64_t next_bitpos = uint64_t(next_elem) * b;
       const size_t next_word = (next_bitpos >> 5) * 4 + next_lane;
-      __builtin_prefetch(&start[next_word], 0, 1);
+      __builtin_prefetch(&start[next_word], 0, 0);
 
       *delta_sum += (-gap + (*i));
       i++;
