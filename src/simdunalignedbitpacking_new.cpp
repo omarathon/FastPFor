@@ -7,7 +7,6 @@
  * (c) Daniel Lemire */
  
 #include "usimdbitpacking_new.h"
-#include "decoding_state.h"
 
 namespace FastPForLib {
 
@@ -15,13 +14,6 @@ namespace simdunaligned_new {
 
 static void SIMD_nullunpacker32(const __m128i *__restrict__,
                                 uint32_t *__restrict__ out) {
-  while (g_i != g_end_exception && g_next_exception_idx < 128) {
-      g_delta_sum += (int32_t)(*g_i); // gap = 0
-      ++g_i;
-      g_next_exception_idx += 1;
-  }
-  g_decoding_idx += 128;
-  // assert(g_decoding_idx >= g_next_exception_idx);
 }
 
 static void __SIMD_fastpackwithoutmask1_32(const uint32_t *__restrict__ _in,
@@ -8932,52 +8924,8 @@ static void __SIMD_fastpack16_32(const uint32_t *__restrict__ _in,
   }
 }
 
-static inline void replace(__m128i* v, size_t idx, uint32_t newval) {
-    switch (idx) {
-        case 0:
-            *v  = _mm_insert_epi32(*v, newval, 0);
-            break;
-        case 1:
-            *v  = _mm_insert_epi32(*v, newval, 1);
-            break;
-        case 2:
-            *v  = _mm_insert_epi32(*v, newval, 2);
-            break;
-        case 3:
-            *v  = _mm_insert_epi32(*v, newval, 3);
-            break;
-        default:
-            __builtin_unreachable();
-    }
-}
-
 // NB: special-case of this logic is manually added to SIMD_nullunpacker32
 static inline void aggregate_sums(__m128i OutReg, __m128i* sum) {
-    if (g_i == g_end_exception || (g_next_exception_idx - g_decoding_idx) >= 4) {
-      *sum = _mm_add_epi32(*sum, OutReg);
-      g_decoding_idx += 4;
-      return;
-    }
-
-    alignas(16) uint32_t lanes[4];
-    _mm_store_si128((__m128i*)lanes, OutReg);
-
-    while (g_i != g_end_exception) {
-        const size_t dist = g_next_exception_idx - g_decoding_idx;
-
-        if (dist >= 4)
-            break;
-
-        const uint32_t gap = lanes[dist];
-        const uint32_t exc = *(g_i++);
-
-        replace(&OutReg, dist, exc);
-
-        g_next_exception_idx += gap + 1;
-    }
-
-    g_decoding_idx += 4;
-
     *sum = _mm_add_epi32(*sum, OutReg);
 }
 

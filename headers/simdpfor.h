@@ -13,14 +13,7 @@
 #include "usimdbitpacking_new.h"
 #include "usimdbitpacking_new.h"
 #include "util.h"
-#include "decoding_state.h"
-
-size_t g_decoding_idx = 0;
-size_t g_next_exception_idx = 0;
-int32_t g_delta_sum = 0;
-
-const uint32_t *__restrict__ g_i = nullptr;
-const uint32_t *__restrict__ g_end_exception = nullptr;
+#include <iostream>
 
 namespace FastPForLib {
 
@@ -304,6 +297,34 @@ public:
     assert(initin + len >= endexceptpointer);
     return endexceptpointer;
   }
+
+  static inline uint32_t read_gap(
+      const uint32_t* input,
+      uint32_t b,
+      size_t index)
+  {
+      if (b == 0) return 0;
+      if (b >= 32) {
+          return input[index];
+      }
+
+      const uint64_t bitpos = uint64_t(index) * b;
+      const uint32_t word = uint32_t(bitpos >> 5); // / 32
+      const uint32_t shift = uint32_t(bitpos & 31);
+
+      // Always load safely
+      uint64_t val = uint64_t(input[word]) >> shift;
+
+      if (shift + b > 32) {
+          // Safe: shift is in [1,31], so (32-shift) is in [1,31]
+          val |= uint64_t(input[word + 1]) << (32 - shift);
+      }
+
+      // Mask without UB
+      const uint32_t mask = (uint32_t(1) << b) - 1;
+      return uint32_t(val) & mask;
+  }
+
   void uncompressblockPFOR(
     const uint32_t
       *__restrict__ inputbegin, // points to the first packed word
@@ -315,20 +336,35 @@ public:
     size_t next_exception // points to the position of the first exception
     , __m128i* sum, int32_t* delta_sum)
   {
-    // init decoding state
-    g_decoding_idx = 0;
-    g_next_exception_idx = next_exception;
-    g_delta_sum = 0;
-    g_i = i;
-    g_end_exception = end_exception;
-
     // decode block
     unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum);
 
-    // propagate end decoding state
-    next_exception = g_next_exception_idx;
-    i = end_exception;
-    *delta_sum += g_delta_sum;
+    for (size_t cur = next_exception; i != end_exception;
+         cur = next_exception) {
+      const auto gap = cur < BlockSize ? read_gap(inputbegin, b, cur) : 0;
+      std::cout << "gap " << gap << " exc " << *i << std::endl;
+      next_exception = cur + static_cast<size_t>(gap) + 1;
+      *delta_sum += (-gap + (*i));
+      i++;
+    }
+
+    // while (i != end_exception) {
+    //     // Read gap directly from packed stream
+    //     const uint32_t gap = read_gap(inputbegin, b, next_exception);
+
+    //     // Correct sum
+    //     *delta_sum += int32_t(*i) - int32_t(gap);
+
+    //     // Advance to next exception
+    //     next_exception += size_t(gap) + 1;
+    //     ++i;
+
+    //     // __builtin_prefetch(
+    //     //     inputbegin + ((uint64_t(next_exception) * b) >> 5),
+    //     //     0,  // read
+    //     //     1   // low temporal locality
+    //     // );
+    // }
   }
 
   virtual std::string name() const override {
