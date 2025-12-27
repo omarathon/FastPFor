@@ -14,6 +14,11 @@
 #include "usimdbitpacking_new.h"
 #include "util.h"
 #include <iostream>
+#include "decoding_state.h"
+#include <cstring>
+
+std::array<__m128i, 32> g_delta_sum_masks{};
+size_t g_decode_counter = 0;
 
 namespace FastPForLib {
 
@@ -298,16 +303,37 @@ public:
     return endexceptpointer;
   }
 
-  static inline uint32_t read_gap_simd_layout(
+  static inline __m128i set_lane_epi32(__m128i v, int32_t value, size_t lane)
+  {
+      switch (lane) {
+          case 0: return _mm_insert_epi32(v, value, 0);
+          case 1: return _mm_insert_epi32(v, value, 1);
+          case 2: return _mm_insert_epi32(v, value, 2);
+          case 3: return _mm_insert_epi32(v, value, 3);
+          default: __builtin_unreachable();
+      }
+  }
+
+  static inline uint32_t correct_gap_simd_layout(
     const uint32_t* input,
     uint32_t b,
-    size_t index)
+    size_t index,
+    uint32_t exc)
   {
-      if (b == 0) return 0;
-      if (b >= 32) return input[index];
-
       const size_t lane = index & 3;     // 0..3 (which 32-bit lane)
       const size_t elem = index >> 2;    // index within that lane stream
+
+      if (b == 0) {
+        const int32_t correction = int32_t(exc);
+        g_delta_sum_masks[elem] = set_lane_epi32(g_delta_sum_masks[elem], correction, lane);
+        return 0;
+      }
+      if (b >= 32) {
+        const auto gap = input[index];
+        const int32_t correction = int32_t(exc) - int32_t(gap);
+        g_delta_sum_masks[elem] = set_lane_epi32(g_delta_sum_masks[elem], correction, lane);
+        return gap;
+      }
 
       const uint64_t bitpos = uint64_t(elem) * b;
       const uint32_t word   = uint32_t(bitpos >> 5);  // 32-bit word index within lane stream
@@ -323,7 +349,12 @@ public:
       }
 
       const uint32_t mask = (b == 32) ? 0xFFFFFFFFu : ((1u << b) - 1u);
-      return uint32_t(val) & mask;
+      const auto gap = uint32_t(val) & mask;
+
+      // set correction_mask[lane] to exc - gap. note that exc - gap may be negative so you must store the signed result.
+      const int32_t correction = int32_t(exc) - int32_t(gap);
+      g_delta_sum_masks[elem] = set_lane_epi32(g_delta_sum_masks[elem], correction, lane);
+      return gap;
   }
 
   void uncompressblockPFOR(
@@ -337,27 +368,18 @@ public:
     size_t next_exception // points to the position of the first exception
     , __m128i* sum, int32_t* delta_sum)
   {
-    const auto start = inputbegin;
-
-    // decode block
-    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum);
-
-    // correct exceptions
+    // precompute corrections
+    std::memset(g_delta_sum_masks.data(), 0, sizeof(g_delta_sum_masks));
     for (size_t cur = next_exception; i != end_exception;
          cur = next_exception) {
-      const auto gap = read_gap_simd_layout(start, b, cur);
+      const auto gap = correct_gap_simd_layout(inputbegin, b, cur, *i);
       next_exception = cur + static_cast<size_t>(gap) + 1;
-
-      // compute next lane/word
-      const size_t next_lane = next_exception & 3;
-      const size_t next_elem = next_exception >> 2;
-      const uint64_t next_bitpos = uint64_t(next_elem) * b;
-      const size_t next_word = (next_bitpos >> 5) * 4 + next_lane;
-      __builtin_prefetch(&start[next_word], 0, 0);
-
-      *delta_sum += (-gap + (*i));
       i++;
     }
+
+    // decode block (branchless w/ precomputed corrections above)
+    g_decode_counter = 0;
+    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum);
   }
 
   virtual std::string name() const override {

@@ -7,13 +7,30 @@
  * (c) Daniel Lemire */
  
 #include "usimdbitpacking_new.h"
+#include <decoding_state.h>
+#include <iostream>
 
 namespace FastPForLib {
 
 namespace simdunaligned_new {
 
+static inline void aggregate_sums(__m128i OutReg, __m128i* sum) {
+  const auto& correction_vector = g_delta_sum_masks[g_decode_counter++];
+  OutReg = _mm_add_epi32(OutReg, correction_vector);
+
+  /*
+   * Now the output is corrected.
+   * Perform the aggregation (sum in our case).
+   */
+  *sum = _mm_add_epi32(*sum, OutReg);
+}
+
 static void SIMD_nullunpacker32(const __m128i *__restrict__,
-                                uint32_t *__restrict__ out) {
+                                uint32_t *__restrict__ out, __m128i* sum) {
+  __m128i v;
+  for (auto i{0uz}; i < 32uz; i++) {
+    aggregate_sums(v, sum);
+  }
 }
 
 static void __SIMD_fastpackwithoutmask1_32(const uint32_t *__restrict__ _in,
@@ -8924,11 +8941,6 @@ static void __SIMD_fastpack16_32(const uint32_t *__restrict__ _in,
   }
 }
 
-// NB: special-case of this logic is manually added to SIMD_nullunpacker32
-static inline void aggregate_sums(__m128i OutReg, __m128i* sum) {
-    *sum = _mm_add_epi32(*sum, OutReg);
-}
-
 static void __SIMD_fastunpack1_32(const __m128i *in, uint32_t *_out, __m128i* sum) {
   __m128i *out = reinterpret_cast<__m128i *>(_out);
   __m128i InReg1 = _mm_loadu_si128(in);
@@ -14813,7 +14825,7 @@ void usimdunpack_new(const __m128i *__restrict__ in, uint32_t *__restrict__ out,
   using namespace simdunaligned_new;
   switch (bit) {
   case 0:
-    SIMD_nullunpacker32(in, out);
+    SIMD_nullunpacker32(in, out, sum);
     return;
 
   case 1:
