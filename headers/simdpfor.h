@@ -13,6 +13,7 @@
 #include "usimdbitpacking_new.h"
 #include "usimdbitpacking_new.h"
 #include "util.h"
+#include <iostream>
 
 namespace FastPForLib {
 
@@ -166,8 +167,8 @@ public:
     usimdpack(source, reinterpret_cast<__m128i *>(out), bit);
   }
 
-  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m128i* sum_lo) {
-    usimdunpack_new(reinterpret_cast<const __m128i *>(source), out, bit, sum_lo);
+  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m128i* sum) {
+    usimdunpack_new(reinterpret_cast<const __m128i *>(source), out, bit, sum);
   }
 
   void encodeArray(const uint32_t *in, const size_t len, uint32_t *out,
@@ -207,7 +208,7 @@ public:
 #endif
     const uint32_t *const finalin = in + len;
     size_t totalnvalue(0);
-    __m128i sum_lo = _mm_setzero_si128();
+    __m128i sum = _mm_setzero_si128();
     int32_t delta_sum = 0;
     uint32_t* initout = out;
     while (totalnvalue < nvalue) {
@@ -216,7 +217,7 @@ public:
       const uint32_t *const befin(in);
 #endif
       assert(finalin <= len + in);
-      in = __decodeArray(in, finalin - in, out, thisnvalue, &sum_lo, &delta_sum);
+      in = __decodeArray(in, finalin - in, out, thisnvalue, &sum, &delta_sum);
       assert(in > befin);
       assert(in <= finalin);
       out += thisnvalue;
@@ -227,15 +228,11 @@ public:
     assert(in <= finalin);
     nvalue = totalnvalue;
 
-    __m128i s = sum_lo;
-
+    __m128i s = sum;
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1,0,3,2)));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2,3,0,1)));
-
-    uint64_t sum = (uint32_t)_mm_cvtsi128_si32(s);
-
-    sum += delta_sum; // Correct exceptions
-    initout[nvalue] = static_cast<uint32_t>(sum);
+    const auto out_sum = (uint32_t)(_mm_cvtsi128_si32(s) + delta_sum /* correct exceptions */);
+    initout[nvalue] = out_sum;
 
     return in;
   }
@@ -273,7 +270,7 @@ public:
 #else
   const uint32_t *__decodeArray(const uint32_t *in, const size_t,
 #endif
-                                uint32_t *out, size_t &nvalue, __m128i* sum_lo, int32_t* delta_sum) {
+                                uint32_t *out, size_t &nvalue, __m128i* sum, int32_t* delta_sum) {
 #ifndef NDEBUG
     const uint32_t *const initin(in);
 #endif
@@ -292,7 +289,7 @@ public:
       const uint32_t firstexcept = *headerin & firstexceptmask;
       const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
       endexceptpointer = initexcept + exceptindex;
-      uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept, sum_lo, delta_sum);
+      uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept, sum, delta_sum);
       in += (BlockSize * b) / 32;
       out += BlockSize;
     }
@@ -300,6 +297,35 @@ public:
     assert(initin + len >= endexceptpointer);
     return endexceptpointer;
   }
+
+  static inline uint32_t read_gap_simd_layout(
+    const uint32_t* input,
+    uint32_t b,
+    size_t index)
+  {
+      if (b == 0) return 0;
+      if (b >= 32) return input[index];
+
+      const size_t lane = index & 3;     // 0..3 (which 32-bit lane)
+      const size_t elem = index >> 2;    // index within that lane stream
+
+      const uint64_t bitpos = uint64_t(elem) * b;
+      const uint32_t word   = uint32_t(bitpos >> 5);  // 32-bit word index within lane stream
+      const uint32_t shift  = uint32_t(bitpos & 31);
+
+      const size_t w0 = size_t(word) * 4 + lane;
+
+      uint64_t val = uint64_t(input[w0]) >> shift;
+
+      if (shift + b > 32) {
+          const size_t w1 = w0 + 4; // next word in SAME lane (next __m128i)
+          val |= uint64_t(input[w1]) << (32 - shift);
+      }
+
+      const uint32_t mask = (b == 32) ? 0xFFFFFFFFu : ((1u << b) - 1u);
+      return uint32_t(val) & mask;
+  }
+
   void uncompressblockPFOR(
     const uint32_t
       *__restrict__ inputbegin, // points to the first packed word
@@ -309,25 +335,29 @@ public:
         &i, // i points to value of the first exception
     const DATATYPE *__restrict__ end_exception,
     size_t next_exception // points to the position of the first exception
-    , __m128i* sum_lo, int32_t* delta_sum)
+    , __m128i* sum, int32_t* delta_sum)
   {
-    // Initialise global exception state
-    if (next_exception < BlockSize) {
-        g_cur_exception = next_exception;
-    } else {
-        g_cur_exception = BlockSize; // no exceptions in this block
+    const auto start = inputbegin;
+
+    // decode block
+    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum);
+
+    // correct exceptions
+    for (size_t cur = next_exception; i != end_exception;
+         cur = next_exception) {
+      const auto gap = read_gap_simd_layout(start, b, cur);
+      next_exception = cur + static_cast<size_t>(gap) + 1;
+
+      // compute next lane/word
+      // const size_t next_lane = next_exception & 3;
+      // const size_t next_elem = next_exception >> 2;
+      // const uint64_t next_bitpos = uint64_t(next_elem) * b;
+      // const size_t next_word = (next_bitpos >> 5) * 4 + next_lane;
+      // __builtin_prefetch(&start[next_word], 0, 1);
+
+      *delta_sum += (-gap + (*i));
+      i++;
     }
-    g_exc            = i;
-    g_end_exception  = end_exception;
-    g_delta_sum      = delta_sum;
-    g_base_index     = 0;
-
-    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum_lo);
-
-    assert(g_cur_exception == BlockSize || g_exc == g_end_exception);
-
-    // Update caller-visible exception pointer
-    i = g_exc;
   }
 
   virtual std::string name() const override {
