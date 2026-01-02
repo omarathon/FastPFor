@@ -14815,6 +14815,7 @@ void usimdunpack_new(const __m128i *__restrict__ in, uint32_t *__restrict__ out,
   case 0:
     SIMD_nullunpacker32(in, out);
     return;
+  }
 
   case 1:
     __SIMD_fastunpack1_32(in, out, sum);
