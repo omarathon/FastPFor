@@ -28,10 +28,12 @@ namespace FastPForLib {
 
 namespace simdunaligned_u16 {
 
-static const __m128i ones_u16 = {0x0001000100010001ULL, 0x0001000100010001ULL};
-
 static inline void aggregate_sums_u16(__m128i OutReg, __m128i* sum) {
-    *sum = _mm_add_epi32(*sum, _mm_madd_epi16(OutReg, ones_u16));
+    // Zero-extend 8 x uint16 -> 4 x int32, then accumulate.
+    // _mm_madd_epi16 treats inputs as signed — wrong for values > 32767.
+    __m128i zero = _mm_setzero_si128();
+    *sum = _mm_add_epi32(*sum, _mm_unpacklo_epi16(OutReg, zero));
+    *sum = _mm_add_epi32(*sum, _mm_unpackhi_epi16(OutReg, zero));
 }
 
 static void SIMD_nullunpacker16(const __m128i *__restrict__,
