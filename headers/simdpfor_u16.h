@@ -259,14 +259,14 @@ public:
                                size_t next_exception, __m128i *sum,
                                int32_t *delta_sum) {
     if (b == 16) {
-      // raw data: unpack and aggregate
+      // raw data: unpack and aggregate via zero-extension
       const uint16_t *raw = reinterpret_cast<const uint16_t *>(inputbegin);
+      __m128i zero = _mm_setzero_si128();
       for (size_t i = 0; i < BlockSize; i += 8) {
         __m128i v = _mm_loadu_si128(
             reinterpret_cast<const __m128i *>(raw + i));
-        static const __m128i ones = {0x0001000100010001ULL,
-                                     0x0001000100010001ULL};
-        *sum = _mm_add_epi32(*sum, _mm_madd_epi16(v, ones));
+        *sum = _mm_add_epi32(*sum, _mm_unpacklo_epi16(v, zero));
+        *sum = _mm_add_epi32(*sum, _mm_unpackhi_epi16(v, zero));
       }
       return;
     }
