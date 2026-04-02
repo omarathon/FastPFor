@@ -130,11 +130,17 @@ public:
     usimdpack_u16(source, reinterpret_cast<__m128i *>(out), bit);
   }
 
+#ifdef SIMD_SUM_FUSED
   void unpackblock(const uint32_t *source, uint16_t *out, const uint32_t bit,
                    __m128i *sum) {
-    (void)out;
     usimdunpack_u16(reinterpret_cast<const __m128i *>(source), out, bit, sum);
   }
+#else
+  void unpackblock(const uint32_t *source, uint16_t *out, const uint32_t bit) {
+    __m128i dummy = _mm_setzero_si128();
+    usimdunpack_u16(reinterpret_cast<const __m128i *>(source), out, bit, &dummy);
+  }
+#endif
 
   void encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
                    size_t &nvalue) {
@@ -163,28 +169,31 @@ public:
     }
     const uint32_t *const finalin = in + len;
     size_t totalnvalue(0);
+#ifdef SIMD_SUM_FUSED
     __m128i sum = _mm_setzero_si128();
     int32_t delta_sum = 0;
     uint16_t *initout = out;
+#endif
     while (totalnvalue < nvalue) {
       size_t thisnvalue = nvalue - totalnvalue;
+#ifdef SIMD_SUM_FUSED
       in = __decodeArray(in, finalin - in, out, thisnvalue, &sum, &delta_sum);
+#else
+      in = __decodeArray(in, finalin - in, out, thisnvalue);
+#endif
       out += thisnvalue;
       totalnvalue += thisnvalue;
     }
     nvalue = totalnvalue;
-
-    // horizontal reduce 4×int32 sum
+#ifdef SIMD_SUM_FUSED
     __m128i s = sum;
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
     const auto out_sum =
         static_cast<uint32_t>(_mm_cvtsi128_si32(s) + delta_sum);
-
-    // store sum as uint32 in 2 uint16 slots after decoded data
     initout[nvalue] = static_cast<uint16_t>(out_sum & 0xFFFF);
     initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
-
+#endif
     return in;
   }
 
@@ -218,8 +227,12 @@ public:
   }
 
   const uint32_t *__decodeArray(const uint32_t *in, const size_t len,
+#ifdef SIMD_SUM_FUSED
                                 uint16_t *out, size_t &nvalue, __m128i *sum,
                                 int32_t *delta_sum) {
+#else
+                                uint16_t *out, size_t &nvalue) {
+#endif
     (void)len;
     nvalue = *in++;
     checkifdivisibleby(nvalue, BlockSize);
@@ -230,7 +243,6 @@ public:
     const uint32_t bitsforfirstexcept = blocksizeinbits;
     const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
 
-    // Decode exceptions on the fly using packed uint16 pairs
     size_t except_offset = 0;
 
     for (size_t k = 0; k < nvalue / BlockSize; ++k) {
@@ -240,14 +252,18 @@ public:
       const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
       const size_t end_except_idx = exceptindex;
 
+#ifdef SIMD_SUM_FUSED
       uncompressblockPFOR_u16(in, out, b, except, except_offset,
                               end_except_idx, firstexcept, sum, delta_sum);
+#else
+      uncompressblockPFOR_u16(in, out, b, except, except_offset,
+                              end_except_idx, firstexcept);
+#endif
       except_offset = end_except_idx;
       in += (BlockSize * b) / 32;
       out += BlockSize;
     }
 
-    // return pointer past exceptions (1 exception per uint32 word)
     return except + except_offset;
   }
 
@@ -256,36 +272,50 @@ public:
                                const uint32_t b,
                                const uint32_t *__restrict__ except_base,
                                size_t start_except_idx, size_t end_except_idx,
-                               size_t next_exception, __m128i *sum,
-                               int32_t *delta_sum) {
+                               size_t next_exception
+#ifdef SIMD_SUM_FUSED
+                               , __m128i *sum, int32_t *delta_sum
+#endif
+  ) {
+#ifdef SIMD_SUM_FUSED
     if (b == 16) {
-      // raw data: unpack and aggregate via zero-extension
+      // raw data: aggregate via zero-extension, no output write
       const uint16_t *raw = reinterpret_cast<const uint16_t *>(inputbegin);
       __m128i zero = _mm_setzero_si128();
       for (size_t i = 0; i < BlockSize; i += 8) {
-        __m128i v = _mm_loadu_si128(
-            reinterpret_cast<const __m128i *>(raw + i));
+        __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i *>(raw + i));
         *sum = _mm_add_epi32(*sum, _mm_unpacklo_epi16(v, zero));
         *sum = _mm_add_epi32(*sum, _mm_unpackhi_epi16(v, zero));
       }
       return;
     }
-
-    // fused unpack: aggregate sums, don't write output
     unpackblock(inputbegin, outputbegin, b, sum);
-
-    // correct exceptions
     const uint16_t *packed_data =
         reinterpret_cast<const uint16_t *>(inputbegin);
     for (size_t idx = start_except_idx; idx != end_except_idx;) {
       const auto gap = read_gap_simd_layout_u16(packed_data, b, next_exception);
       next_exception = next_exception + static_cast<size_t>(gap) + 1;
-
       uint16_t exc_val = static_cast<uint16_t>(except_base[idx]);
-
       *delta_sum += (static_cast<int32_t>(exc_val) - static_cast<int32_t>(gap));
       idx++;
     }
+#else
+    if (b == 16) {
+      // raw copy: unpack two uint16 per uint32 word
+      const uint32_t *raw32 = inputbegin;
+      for (size_t k = 0; k < BlockSize / 2; ++k) {
+        outputbegin[2 * k]     = static_cast<uint16_t>(raw32[k] & 0xFFFF);
+        outputbegin[2 * k + 1] = static_cast<uint16_t>(raw32[k] >> 16);
+      }
+      return;
+    }
+    unpackblock(inputbegin, outputbegin, b);
+    for (size_t idx = start_except_idx; idx != end_except_idx; ++idx) {
+      size_t cur = next_exception;
+      next_exception = cur + static_cast<size_t>(outputbegin[cur]) + 1;
+      outputbegin[cur] = static_cast<uint16_t>(except_base[idx]);
+    }
+#endif
   }
 
   static inline uint32_t read_gap_simd_layout_u16(const uint16_t *input,

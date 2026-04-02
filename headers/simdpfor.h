@@ -10,10 +10,12 @@
 
 #include "common.h"
 #include "codecs.h"
+#ifdef SIMD_SUM_FUSED
 #include "usimdbitpacking_new.h"
-#include "usimdbitpacking_new.h"
+#else
+#include "usimdbitpacking.h"
+#endif
 #include "util.h"
-#include <iostream>
 
 namespace FastPForLib {
 
@@ -167,9 +169,15 @@ public:
     usimdpack(source, reinterpret_cast<__m128i *>(out), bit);
   }
 
+#ifdef SIMD_SUM_FUSED
   void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m128i* sum) {
     usimdunpack_new(reinterpret_cast<const __m128i *>(source), out, bit, sum);
   }
+#else
+  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit) {
+    usimdunpack(reinterpret_cast<const __m128i *>(source), out, bit);
+  }
+#endif
 
   void encodeArray(const uint32_t *in, const size_t len, uint32_t *out,
                    size_t &nvalue) override {
@@ -202,22 +210,27 @@ public:
     if (nvalue == 0) {
       return in;
     }
-      
 #ifndef NDEBUG
     const uint32_t *const initin = in;
 #endif
     const uint32_t *const finalin = in + len;
     size_t totalnvalue(0);
+#ifdef SIMD_SUM_FUSED
     __m128i sum = _mm_setzero_si128();
     int32_t delta_sum = 0;
     uint32_t* initout = out;
+#endif
     while (totalnvalue < nvalue) {
       size_t thisnvalue = nvalue - totalnvalue;
 #ifndef NDEBUG
       const uint32_t *const befin(in);
 #endif
       assert(finalin <= len + in);
+#ifdef SIMD_SUM_FUSED
       in = __decodeArray(in, finalin - in, out, thisnvalue, &sum, &delta_sum);
+#else
+      in = __decodeArray(in, finalin - in, out, thisnvalue);
+#endif
       assert(in > befin);
       assert(in <= finalin);
       out += thisnvalue;
@@ -227,13 +240,13 @@ public:
     assert(in <= len + initin);
     assert(in <= finalin);
     nvalue = totalnvalue;
-
+#ifdef SIMD_SUM_FUSED
     __m128i s = sum;
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1,0,3,2)));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2,3,0,1)));
     const auto out_sum = (uint32_t)(_mm_cvtsi128_si32(s) + delta_sum /* correct exceptions */);
     initout[nvalue] = out_sum;
-
+#endif
     return in;
   }
 
@@ -270,7 +283,11 @@ public:
 #else
   const uint32_t *__decodeArray(const uint32_t *in, const size_t,
 #endif
+#ifdef SIMD_SUM_FUSED
                                 uint32_t *out, size_t &nvalue, __m128i* sum, int32_t* delta_sum) {
+#else
+                                uint32_t *out, size_t &nvalue) {
+#endif
 #ifndef NDEBUG
     const uint32_t *const initin(in);
 #endif
@@ -289,7 +306,11 @@ public:
       const uint32_t firstexcept = *headerin & firstexceptmask;
       const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
       endexceptpointer = initexcept + exceptindex;
+#ifdef SIMD_SUM_FUSED
       uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept, sum, delta_sum);
+#else
+      uncompressblockPFOR(in, out, b, except, endexceptpointer, firstexcept);
+#endif
       in += (BlockSize * b) / 32;
       out += BlockSize;
     }
@@ -327,37 +348,32 @@ public:
   }
 
   void uncompressblockPFOR(
-    const uint32_t
-      *__restrict__ inputbegin, // points to the first packed word
-    DATATYPE *__restrict__ outputbegin,
-    const uint32_t b,
-    const DATATYPE *__restrict__
-        &i, // i points to value of the first exception
-    const DATATYPE *__restrict__ end_exception,
-    size_t next_exception // points to the position of the first exception
-    , __m128i* sum, int32_t* delta_sum)
-  {
+      const uint32_t *__restrict__ inputbegin,
+      DATATYPE *__restrict__ outputbegin,
+      const uint32_t b,
+      const DATATYPE *__restrict__ &i,
+      const DATATYPE *__restrict__ end_exception,
+      size_t next_exception
+#ifdef SIMD_SUM_FUSED
+      , __m128i* sum, int32_t* delta_sum
+#endif
+  ) {
+#ifdef SIMD_SUM_FUSED
     const auto start = inputbegin;
-
-    // decode block
-    unpackblock(inputbegin, reinterpret_cast<uint32_t *> (outputbegin), b, sum);
-
-    // correct exceptions
-    for (size_t cur = next_exception; i != end_exception;
-         cur = next_exception) {
+    unpackblock(inputbegin, reinterpret_cast<uint32_t *>(outputbegin), b, sum);
+    for (size_t cur = next_exception; i != end_exception; cur = next_exception) {
       const auto gap = read_gap_simd_layout(start, b, cur);
       next_exception = cur + static_cast<size_t>(gap) + 1;
-
-      // compute next lane/word
-      // const size_t next_lane = next_exception & 3;
-      // const size_t next_elem = next_exception >> 2;
-      // const uint64_t next_bitpos = uint64_t(next_elem) * b;
-      // const size_t next_word = (next_bitpos >> 5) * 4 + next_lane;
-      // __builtin_prefetch(&start[next_word], 0, 1);
-
       *delta_sum += (-gap + (*i));
       i++;
     }
+#else
+    unpackblock(inputbegin, reinterpret_cast<uint32_t *>(outputbegin), b);
+    for (size_t cur = next_exception; i != end_exception; cur = next_exception) {
+      next_exception = cur + static_cast<size_t>(outputbegin[cur]) + 1;
+      outputbegin[cur] = *(i++);
+    }
+#endif
   }
 
   virtual std::string name() const override {
