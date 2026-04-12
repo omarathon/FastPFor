@@ -12,11 +12,12 @@ namespace FastPForLib {
 
 namespace simdunaligned_u16 {
 
+static const __m256i kZero = _mm256_setzero_si256();
+
 static inline void aggregate_sums_u16(__m256i OutReg, __m256i* sum) {
     // Zero-extend uint16 -> int32, then accumulate.
-    __m256i zero = _mm256_setzero_si256();
-    *sum = _mm256_add_epi32(*sum, _mm256_unpacklo_epi16(OutReg, zero));
-    *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(OutReg, zero));
+    *sum = _mm256_add_epi32(*sum, _mm256_unpacklo_epi16(OutReg, kZero));
+    *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(OutReg, kZero));
 }
 
 static void SIMD_nullunpacker16(const __m256i *__restrict__,

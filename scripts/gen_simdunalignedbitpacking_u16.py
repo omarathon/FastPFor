@@ -67,11 +67,12 @@ namespace FastPForLib {{
 
 namespace simdunaligned_u16 {{
 
+static const {I['reg']} kZero = {I['setzero']}();
+
 static inline void aggregate_sums_u16({I['reg']} OutReg, {I['reg']}* sum) {{
     // Zero-extend uint16 -> int32, then accumulate.
-    {I['reg']} zero = {I['setzero']}();
-    *sum = {I['add']}(*sum, {I['unpacklo']}(OutReg, zero));
-    *sum = {I['add']}(*sum, {I['unpackhi']}(OutReg, zero));
+    *sum = {I['add']}(*sum, {I['unpacklo']}(OutReg, kZero));
+    *sum = {I['add']}(*sum, {I['unpackhi']}(OutReg, kZero));
 }}
 
 static void SIMD_nullunpacker16(const {I['reg']} *__restrict__,
