@@ -21,9 +21,9 @@ class SIMDPForU16 {
 public:
   enum {
     BlockSizeInUnitsOfPackSize = 16,
-    PACKSIZE = 8,
-    BlockSize = BlockSizeInUnitsOfPackSize * PACKSIZE, // 128
-    blocksizeinbits = 7
+    PACKSIZE = 16,
+    BlockSize = BlockSizeInUnitsOfPackSize * PACKSIZE, // 256
+    blocksizeinbits = 8
   };
 
   typedef uint16_t DATATYPE;
@@ -127,13 +127,13 @@ public:
   }
 
   void packblock(const uint16_t *source, uint32_t *out, const uint32_t bit) {
-    usimdpack_u16(source, reinterpret_cast<__m128i *>(out), bit);
+    usimdpack_u16(source, reinterpret_cast<__m256i *>(out), bit);
   }
 
   void unpackblock(const uint32_t *source, uint16_t *out, const uint32_t bit,
-                   __m128i *sum) {
+                   __m256i *sum) {
     (void)out;
-    usimdunpack_u16(reinterpret_cast<const __m128i *>(source), out, bit, sum);
+    usimdunpack_u16(reinterpret_cast<const __m256i *>(source), out, bit, sum);
   }
 
   void encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
@@ -163,7 +163,7 @@ public:
     }
     const uint32_t *const finalin = in + len;
     size_t totalnvalue(0);
-    __m128i sum = _mm_setzero_si128();
+    __m256i sum = _mm256_setzero_si256();
     int32_t delta_sum = 0;
     uint16_t *initout = out;
     while (totalnvalue < nvalue) {
@@ -174,8 +174,10 @@ public:
     }
     nvalue = totalnvalue;
 
-    // horizontal reduce 4×int32 sum
-    __m128i s = sum;
+    // 256-bit horizontal sum: fold 256->128, then 128->scalar
+    __m128i lo = _mm256_castsi256_si128(sum);
+    __m128i hi = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
     const auto out_sum =
@@ -218,7 +220,7 @@ public:
   }
 
   const uint32_t *__decodeArray(const uint32_t *in, const size_t len,
-                                uint16_t *out, size_t &nvalue, __m128i *sum,
+                                uint16_t *out, size_t &nvalue, __m256i *sum,
                                 int32_t *delta_sum) {
     (void)len;
     nvalue = *in++;
@@ -256,17 +258,17 @@ public:
                                const uint32_t b,
                                const uint32_t *__restrict__ except_base,
                                size_t start_except_idx, size_t end_except_idx,
-                               size_t next_exception, __m128i *sum,
+                               size_t next_exception, __m256i *sum,
                                int32_t *delta_sum) {
     if (b == 16) {
       // raw data: unpack and aggregate via zero-extension
       const uint16_t *raw = reinterpret_cast<const uint16_t *>(inputbegin);
-      __m128i zero = _mm_setzero_si128();
-      for (size_t i = 0; i < BlockSize; i += 8) {
-        __m128i v = _mm_loadu_si128(
-            reinterpret_cast<const __m128i *>(raw + i));
-        *sum = _mm_add_epi32(*sum, _mm_unpacklo_epi16(v, zero));
-        *sum = _mm_add_epi32(*sum, _mm_unpackhi_epi16(v, zero));
+      __m256i zero = _mm256_setzero_si256();
+      for (size_t i = 0; i < BlockSize; i += 16) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i *>(raw + i));
+        *sum = _mm256_add_epi32(*sum, _mm256_unpacklo_epi16(v, zero));
+        *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(v, zero));
       }
       return;
     }
@@ -295,19 +297,19 @@ public:
     if (b >= 16)
       return input[index];
 
-    const size_t lane = index & 7;     // 0..7 (which 16-bit lane)
-    const size_t elem = index >> 3;    // index within that lane stream
+    const size_t lane = index & 15;    // 0..15 (which 16-bit lane in __m256i)
+    const size_t elem = index >> 4;    // index within that lane stream
 
     const uint32_t bitpos = static_cast<uint32_t>(elem) * b;
     const uint32_t word = bitpos >> 4;  // 16-bit word index within lane stream
     const uint32_t shift = bitpos & 15;
 
-    const size_t w0 = size_t(word) * 8 + lane;
+    const size_t w0 = size_t(word) * 16 + lane;
 
     uint32_t val = uint32_t(input[w0]) >> shift;
 
     if (shift + b > 16) {
-      const size_t w1 = w0 + 8; // next word in SAME lane
+      const size_t w1 = w0 + 16; // next word in SAME lane (next __m256i)
       val |= uint32_t(input[w1]) << (16 - shift);
     }
 

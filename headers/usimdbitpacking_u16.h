@@ -9,11 +9,11 @@
 
 namespace FastPForLib {
 
-void usimdpack_u16(const uint16_t *__restrict__ in, __m128i *__restrict__ out,
+void usimdpack_u16(const uint16_t *__restrict__ in, __m256i *__restrict__ out,
                    uint32_t bit);
 
-void usimdunpack_u16(const __m128i *__restrict__ in, uint16_t *__restrict__ out,
-                     uint32_t bit, __m128i *__restrict__ sum);
+void usimdunpack_u16(const __m256i *__restrict__ in, uint16_t *__restrict__ out,
+                     uint32_t bit, __m256i *__restrict__ sum);
 
 } // namespace FastPForLib
 

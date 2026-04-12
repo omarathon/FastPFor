@@ -176,9 +176,8 @@ void SIMDNewPFor<BlockSizeInUnitsOfPackSize, ExceptionCoder>::encodeBlock(
     /* Write exceptional values */
 
     out += static_cast<uint32_t>(encodedExceptions_sz);
-    assert(BlockSize == 128);
-    usimdpack(&tobecoded[0], reinterpret_cast<__m128i *>(out), b);
-    out += 4 * b;
+    usimdpack(&tobecoded[0], reinterpret_cast<__m256i *>(out), b);
+    out += 8 * b;
 
     nvalue = out - initout;
 
@@ -269,9 +268,9 @@ SIMDNewPFor<BlockSizeInUnitsOfPackSize, ExceptionCoder>::decodeArray(
     in += encodedExceptionsSize;
 
     uint32_t *beginout(out); // we use this later
-    usimdunpack(reinterpret_cast<const __m128i *>(in), out, b);
-    in += 4 * b;
-    out += 128;
+    usimdunpack(reinterpret_cast<const __m256i *>(in), out, b);
+    in += 8 * b;
+    out += 256;
 
     for (uint32_t e = 0, lpos = -1; e < nExceptions; e++) {
       lpos += exceptions[e] + 1;
