@@ -23,6 +23,27 @@ void usimdunpack_u16_corrected(const __m256i *__restrict__ in,
                                const __m256i *__restrict__ corrections,
                                __m256i *__restrict__ sum);
 
+// Corrected + LOCAL delta variant: per-OutReg pipeline is correction → zigzag
+// decode → per-OutReg prefix sum → aggregate. Each OutReg holds 16 consecutive
+// elements; lane 0 is a zigzag-encoded anchor (delta from 0), lanes 1..15 are
+// zigzag-encoded deltas from lane j-1. No inter-OutReg carry.
+void usimdunpack_u16_corrected_delta_local(const __m256i *__restrict__ in,
+                                            uint16_t *__restrict__ out,
+                                            uint32_t bit,
+                                            const __m256i *__restrict__ corrections,
+                                            __m256i *__restrict__ sum);
+
+// Corrected + CARRY delta variant: same pipeline as local but additionally adds
+// `*carry` (prev OutReg's last decoded value broadcast to all 16 lanes) before
+// aggregation, and updates `*carry` to the new lane-15 broadcast. `*carry` must
+// be initialized by the caller (e.g. zeroed for first OutReg of stream).
+void usimdunpack_u16_corrected_delta_carry(const __m256i *__restrict__ in,
+                                            uint16_t *__restrict__ out,
+                                            uint32_t bit,
+                                            const __m256i *__restrict__ corrections,
+                                            __m256i *__restrict__ carry,
+                                            __m256i *__restrict__ sum);
+
 } // namespace FastPForLib
 
 #endif /* USIMDBITPACKING_U16_H_ */

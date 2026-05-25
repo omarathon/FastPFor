@@ -144,6 +144,25 @@ public:
                               bit, corrections, sum);
   }
 
+  void unpackblock_corrected_delta_local(const uint32_t *source, uint16_t *out,
+                                          const uint32_t bit,
+                                          const __m256i *corrections,
+                                          __m256i *sum) {
+    (void)out;
+    usimdunpack_u16_corrected_delta_local(
+        reinterpret_cast<const __m256i *>(source), out, bit, corrections, sum);
+  }
+
+  void unpackblock_corrected_delta_carry(const uint32_t *source, uint16_t *out,
+                                          const uint32_t bit,
+                                          const __m256i *corrections,
+                                          __m256i *carry, __m256i *sum) {
+    (void)out;
+    usimdunpack_u16_corrected_delta_carry(
+        reinterpret_cast<const __m256i *>(source), out, bit, corrections, carry,
+        sum);
+  }
+
   void encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
                    size_t &nvalue) {
     *out++ = static_cast<uint32_t>(len);
@@ -194,6 +213,90 @@ public:
     // store sum as uint32 in 2 uint16 slots after decoded data
     initout[nvalue] = static_cast<uint16_t>(out_sum & 0xFFFF);
     initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
+
+    return in;
+  }
+
+  // Corrected + LOCAL delta variant: each OutReg is an independent prefix-sum
+  // window (lane 0 = zigzag(in[16v]); lanes 1..15 = zigzag(in[16v+j]-in[16v+j-1])).
+  // No inter-OutReg carry.
+  const uint32_t *decodeArrayCorrectedDeltaLocal(const uint32_t *in,
+                                                  const size_t len,
+                                                  uint16_t *out,
+                                                  size_t &nvalue) {
+    nvalue = *in++;
+    if (nvalue == 0) {
+      return in;
+    }
+    const uint32_t *const finalin = in + len;
+    size_t totalnvalue(0);
+    __m256i sum = _mm256_setzero_si256();
+    uint16_t *initout = out;
+    while (totalnvalue < nvalue) {
+      size_t thisnvalue = nvalue - totalnvalue;
+      in = __decodeArrayCorrectedDeltaLocal(in, finalin - in, out, thisnvalue,
+                                             &sum);
+      out += thisnvalue;
+      totalnvalue += thisnvalue;
+    }
+    nvalue = totalnvalue;
+
+    __m128i lo = _mm256_castsi256_si128(sum);
+    __m128i hi = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
+    const auto out_sum = static_cast<uint32_t>(_mm_cvtsi128_si32(s));
+
+    initout[nvalue] = static_cast<uint16_t>(out_sum & 0xFFFF);
+    initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
+
+    return in;
+  }
+
+  // Corrected + CARRY delta variant: a single running prefix-sum chain across
+  // all OutRegs / blocks. `last_value_out` receives the final decoded value
+  // (= in[nvalue-1]) so a VB tail can seed its scalar prev. Initial carry = 0.
+  const uint32_t *decodeArrayCorrectedDeltaCarry(const uint32_t *in,
+                                                  const size_t len,
+                                                  uint16_t *out,
+                                                  size_t &nvalue,
+                                                  uint16_t *last_value_out) {
+    nvalue = *in++;
+    if (nvalue == 0) {
+      if (last_value_out)
+        *last_value_out = 0;
+      return in;
+    }
+    const uint32_t *const finalin = in + len;
+    size_t totalnvalue(0);
+    __m256i sum = _mm256_setzero_si256();
+    __m256i carry = _mm256_setzero_si256();
+    uint16_t *initout = out;
+    while (totalnvalue < nvalue) {
+      size_t thisnvalue = nvalue - totalnvalue;
+      in = __decodeArrayCorrectedDeltaCarry(in, finalin - in, out, thisnvalue,
+                                             &carry, &sum);
+      out += thisnvalue;
+      totalnvalue += thisnvalue;
+    }
+    nvalue = totalnvalue;
+
+    __m128i lo = _mm256_castsi256_si128(sum);
+    __m128i hi = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
+    const auto out_sum = static_cast<uint32_t>(_mm_cvtsi128_si32(s));
+
+    initout[nvalue] = static_cast<uint16_t>(out_sum & 0xFFFF);
+    initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
+
+    if (last_value_out) {
+      // carry holds broadcast(in[nvalue-1]); extract lane 0.
+      *last_value_out =
+          static_cast<uint16_t>(_mm256_extract_epi16(carry, 0));
+    }
 
     return in;
   }
@@ -294,6 +397,83 @@ public:
     }
 
     // return pointer past exceptions (1 exception per uint32 word)
+    return except + except_offset;
+  }
+
+  // Same control flow as __decodeArrayCorrected; each block goes through the
+  // corrected+delta-local pipeline (zigzag_dec + per-OutReg prefix sum +
+  // aggregate). No inter-OutReg carry.
+  const uint32_t *__decodeArrayCorrectedDeltaLocal(const uint32_t *in,
+                                                    const size_t len,
+                                                    uint16_t *out,
+                                                    size_t &nvalue,
+                                                    __m256i *sum) {
+    (void)len;
+    nvalue = *in++;
+    checkifdivisibleby(nvalue, BlockSize);
+    const uint32_t b = *in++;
+    const uint32_t *__restrict__ except =
+        in + nvalue * b / 32 + nvalue / BlockSize;
+
+    const uint32_t bitsforfirstexcept = blocksizeinbits;
+    const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
+
+    size_t except_offset = 0;
+
+    for (size_t k = 0; k < nvalue / BlockSize; ++k) {
+      const uint32_t *const headerin(in);
+      ++in;
+      const uint32_t firstexcept = *headerin & firstexceptmask;
+      const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
+      const size_t end_except_idx = exceptindex;
+
+      uncompressblockPFOR_u16_corrected_delta_local(
+          in, out, b, except, except_offset, end_except_idx, firstexcept, sum);
+      except_offset = end_except_idx;
+      in += (BlockSize * b) / 32;
+      out += BlockSize;
+    }
+
+    return except + except_offset;
+  }
+
+  // Same control flow as __decodeArrayCorrected; each block goes through the
+  // corrected+delta-carry pipeline. `carry` is a single __m256i broadcast of
+  // the most recently decoded value, maintained across blocks.
+  const uint32_t *__decodeArrayCorrectedDeltaCarry(const uint32_t *in,
+                                                    const size_t len,
+                                                    uint16_t *out,
+                                                    size_t &nvalue,
+                                                    __m256i *carry,
+                                                    __m256i *sum) {
+    (void)len;
+    nvalue = *in++;
+    checkifdivisibleby(nvalue, BlockSize);
+    const uint32_t b = *in++;
+    const uint32_t *__restrict__ except =
+        in + nvalue * b / 32 + nvalue / BlockSize;
+
+    const uint32_t bitsforfirstexcept = blocksizeinbits;
+    const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
+
+    size_t except_offset = 0;
+
+    for (size_t k = 0; k < nvalue / BlockSize; ++k) {
+      const uint32_t *const headerin(in);
+      ++in;
+      const uint32_t firstexcept = *headerin & firstexceptmask;
+      const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
+      const size_t end_except_idx = exceptindex;
+
+      uncompressblockPFOR_u16_corrected_delta_carry(in, out, b, except,
+                                                     except_offset,
+                                                     end_except_idx,
+                                                     firstexcept, carry, sum);
+      except_offset = end_except_idx;
+      in += (BlockSize * b) / 32;
+      out += BlockSize;
+    }
+
     return except + except_offset;
   }
 
@@ -423,6 +603,64 @@ public:
     unpackblock_corrected(
         inputbegin, outputbegin, b,
         reinterpret_cast<const __m256i *>(corrections_data), sum);
+  }
+
+  // Per-block helper for delta-local: walks the exception gap chain, writes
+  // (exc - gap) into a stack-local corrections array, then runs the
+  // corrected+delta-local SIMD pipeline. For b == 16 the corrections array
+  // stays all-zero (no exceptions encoded at b == 16); the SIMD pipeline still
+  // applies zigzag_dec + prefix_sum + aggregate to the raw loaded data.
+  void uncompressblockPFOR_u16_corrected_delta_local(
+      const uint32_t *__restrict__ inputbegin,
+      uint16_t *__restrict__ outputbegin, const uint32_t b,
+      const uint32_t *__restrict__ except_base, size_t start_except_idx,
+      size_t end_except_idx, size_t next_exception, __m256i *sum) {
+    alignas(32) uint16_t corrections_data[BlockSize] = {0};
+
+    if (b < 16) {
+      const uint16_t *packed_data =
+          reinterpret_cast<const uint16_t *>(inputbegin);
+      for (size_t idx = start_except_idx; idx != end_except_idx; ++idx) {
+        const uint32_t gap =
+            read_gap_simd_layout_u16(packed_data, b, next_exception);
+        const uint16_t exc_val = static_cast<uint16_t>(except_base[idx]);
+        corrections_data[next_exception] =
+            static_cast<uint16_t>(exc_val - static_cast<uint16_t>(gap));
+        next_exception = next_exception + static_cast<size_t>(gap) + 1;
+      }
+    }
+
+    unpackblock_corrected_delta_local(
+        inputbegin, outputbegin, b,
+        reinterpret_cast<const __m256i *>(corrections_data), sum);
+  }
+
+  // Per-block helper for delta-carry: same as delta_local but additionally
+  // threads the broadcast-carry __m256i through the SIMD pipeline.
+  void uncompressblockPFOR_u16_corrected_delta_carry(
+      const uint32_t *__restrict__ inputbegin,
+      uint16_t *__restrict__ outputbegin, const uint32_t b,
+      const uint32_t *__restrict__ except_base, size_t start_except_idx,
+      size_t end_except_idx, size_t next_exception, __m256i *carry,
+      __m256i *sum) {
+    alignas(32) uint16_t corrections_data[BlockSize] = {0};
+
+    if (b < 16) {
+      const uint16_t *packed_data =
+          reinterpret_cast<const uint16_t *>(inputbegin);
+      for (size_t idx = start_except_idx; idx != end_except_idx; ++idx) {
+        const uint32_t gap =
+            read_gap_simd_layout_u16(packed_data, b, next_exception);
+        const uint16_t exc_val = static_cast<uint16_t>(except_base[idx]);
+        corrections_data[next_exception] =
+            static_cast<uint16_t>(exc_val - static_cast<uint16_t>(gap));
+        next_exception = next_exception + static_cast<size_t>(gap) + 1;
+      }
+    }
+
+    unpackblock_corrected_delta_carry(
+        inputbegin, outputbegin, b,
+        reinterpret_cast<const __m256i *>(corrections_data), carry, sum);
   }
 
   static inline uint32_t read_gap_simd_layout_u16(const uint16_t *input,

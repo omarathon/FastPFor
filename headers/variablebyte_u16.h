@@ -126,6 +126,145 @@ public:
     return inbyte;
   }
 
+  // ── Delta variants ─────────────────────────────────────────────────────────
+  //
+  // The VB-encoded stream here contains zigzag-encoded deltas. The two methods
+  // below decode VByte values, un-zigzag, and un-delta on the fly to recover
+  // the ORIGINAL uint16 values, and write the sum of those original values to
+  // the overflow slots (same layout as decodeArray).
+  //
+  // decodeArrayDeltaLocal: prev resets to 0 every 16 decoded elements (the
+  //   element at offset 0, 16, 32, ... is an anchor with zigzag-encoded
+  //   delta-from-0).
+  // decodeArrayDeltaCarry: prev starts at seed_prev (carry from a preceding
+  //   SIMDPFor decode); never resets.
+
+  const uint32_t *decodeArrayDeltaLocal(const uint32_t *in, const size_t length,
+                                         uint16_t *out, size_t &nvalue) {
+    const uint8_t *inbyte = reinterpret_cast<const uint8_t *>(in);
+    const size_t bytelen = length * sizeof(uint32_t);
+    decodeFromByteArrayDeltaLocal(inbyte, bytelen, out, nvalue);
+    return in + length;
+  }
+
+  const uint8_t *decodeFromByteArrayDeltaLocal(const uint8_t *inbyte,
+                                               const size_t length,
+                                               uint16_t *out, size_t &nvalue) {
+    if (length == 0) {
+      nvalue = 0;
+      return inbyte;
+    }
+    const uint8_t *const endbyte = inbyte + length;
+    uint16_t *initout = out;
+
+    uint32_t sum = 0;
+    uint32_t nv = 0;
+    uint16_t prev = 0;
+
+    // Lambda to consume one VByte value into `v`. Returns true if a value was
+    // produced, false if the byte stream ended (only possible mid-padding).
+    auto consume_one = [&](uint16_t &v_out) -> bool {
+      uint16_t v = 0;
+      unsigned int shift = 0;
+      while (endbyte > inbyte) {
+        uint8_t c = *inbyte++;
+        v += static_cast<uint16_t>((c & 127) << shift);
+        if (c & 128) {
+          v_out = v;
+          return true;
+        }
+        shift += 7;
+      }
+      return false;
+    };
+
+    while (endbyte > inbyte) {
+      uint16_t encoded;
+      if (!consume_one(encoded)) break;
+      const uint16_t delta = ZigzagDec16_inline(encoded);
+      uint16_t cur;
+      if ((nv & 15) == 0) {
+        // Anchor: prev resets to 0, so cur = 0 + delta = delta.
+        cur = delta;
+      } else {
+        cur = static_cast<uint16_t>(prev + delta);
+      }
+      prev = cur;
+      sum += cur;
+      ++nv;
+    }
+    nvalue = nv;
+
+    initout[nvalue] = static_cast<uint16_t>(sum & 0xFFFF);
+    initout[nvalue + 1] = static_cast<uint16_t>(sum >> 16);
+
+    return inbyte;
+  }
+
+  const uint32_t *decodeArrayDeltaCarry(const uint32_t *in, const size_t length,
+                                         uint16_t *out, size_t &nvalue,
+                                         uint16_t seed_prev) {
+    const uint8_t *inbyte = reinterpret_cast<const uint8_t *>(in);
+    const size_t bytelen = length * sizeof(uint32_t);
+    decodeFromByteArrayDeltaCarry(inbyte, bytelen, out, nvalue, seed_prev);
+    return in + length;
+  }
+
+  const uint8_t *decodeFromByteArrayDeltaCarry(const uint8_t *inbyte,
+                                               const size_t length,
+                                               uint16_t *out, size_t &nvalue,
+                                               uint16_t seed_prev) {
+    if (length == 0) {
+      nvalue = 0;
+      return inbyte;
+    }
+    const uint8_t *const endbyte = inbyte + length;
+    uint16_t *initout = out;
+
+    uint32_t sum = 0;
+    uint32_t nv = 0;
+    uint16_t prev = seed_prev;
+
+    auto consume_one = [&](uint16_t &v_out) -> bool {
+      uint16_t v = 0;
+      unsigned int shift = 0;
+      while (endbyte > inbyte) {
+        uint8_t c = *inbyte++;
+        v += static_cast<uint16_t>((c & 127) << shift);
+        if (c & 128) {
+          v_out = v;
+          return true;
+        }
+        shift += 7;
+      }
+      return false;
+    };
+
+    while (endbyte > inbyte) {
+      uint16_t encoded;
+      if (!consume_one(encoded)) break;
+      const uint16_t delta = ZigzagDec16_inline(encoded);
+      const uint16_t cur = static_cast<uint16_t>(prev + delta);
+      prev = cur;
+      sum += cur;
+      ++nv;
+    }
+    nvalue = nv;
+
+    initout[nvalue] = static_cast<uint16_t>(sum & 0xFFFF);
+    initout[nvalue + 1] = static_cast<uint16_t>(sum >> 16);
+
+    return inbyte;
+  }
+
+  // Local copy of ZigzagDec16 to avoid pulling in the project-level header
+  // from inside the external/ tree. Bijective inverse of zigzag-encoding;
+  // matches src/codecs/uint16/predictive_codecs_u16.h::ZigzagDec16.
+  static inline uint16_t ZigzagDec16_inline(uint16_t z) {
+    return static_cast<uint16_t>(
+        (z >> 1) ^ static_cast<uint16_t>(-(static_cast<int>(z) & 1)));
+  }
+
   std::string name() const { return "VariableByte"; }
 };
 
