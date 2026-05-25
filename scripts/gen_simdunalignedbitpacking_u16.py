@@ -31,6 +31,7 @@ def intrinsics(width):
             srli='_mm_srli_epi16',
             set1='_mm_set1_epi16',
             add='_mm_add_epi32',
+            add_u16='_mm_add_epi16',
             unpacklo='_mm_unpacklo_epi16',
             unpackhi='_mm_unpackhi_epi16',
         )
@@ -46,6 +47,7 @@ def intrinsics(width):
             srli='_mm256_srli_epi16',
             set1='_mm256_set1_epi16',
             add='_mm256_add_epi32',
+            add_u16='_mm256_add_epi16',
             unpacklo='_mm256_unpacklo_epi16',
             unpackhi='_mm256_unpackhi_epi16',
         )
@@ -71,6 +73,18 @@ static const {I['reg']} kZero = {I['setzero']}();
 
 static inline void aggregate_sums_u16({I['reg']} OutReg, {I['reg']}* sum) {{
     // Zero-extend uint16 -> int32, then accumulate.
+    *sum = {I['add']}(*sum, {I['unpacklo']}(OutReg, kZero));
+    *sum = {I['add']}(*sum, {I['unpackhi']}(OutReg, kZero));
+}}
+
+// Corrected variant: fold per-OutReg exception correction into the aggregation.
+// `correction` holds (exc - unpacked_gap) at exception lanes (mod 2^16) and 0
+// elsewhere. uint16 add wraps the same way the codec encodes, so non-exception
+// lanes are unchanged and exception lanes become exc.
+static inline void aggregate_sums_u16_corrected({I['reg']} OutReg,
+                                                 {I['reg']} correction,
+                                                 {I['reg']}* sum) {{
+    OutReg = {I['add_u16']}(OutReg, correction);
     *sum = {I['add']}(*sum, {I['unpacklo']}(OutReg, kZero));
     *sum = {I['add']}(*sum, {I['unpackhi']}(OutReg, kZero));
 }}
@@ -149,8 +163,13 @@ def gen_pack_function(bit, I):
     return "\n".join(lines)
 
 
-def gen_unpack_function(bit, I):
-    """Generate fused unpack+sum function for given bit width."""
+def gen_unpack_function(bit, I, corrected=False):
+    """Generate fused unpack+sum function for given bit width.
+
+    If corrected=True, emits a variant that takes a `corrections` array of
+    one register per OutReg (BlockSize/lanes entries) and folds the per-OutReg
+    correction into aggregation via aggregate_sums_u16_corrected.
+    """
     lines = []
     lanes = I['lanes']
     block = I['block']
@@ -159,17 +178,34 @@ def gen_unpack_function(bit, I):
     if bit == 0:
         return ""
 
-    lines.append(f"static void __SIMD_fastunpack{bit}_16("
+    suffix = "_corrected" if corrected else ""
+    extra_param = (f", const {I['reg']} *__restrict__ corrections"
+                   if corrected else "")
+    def agg_call(outreg_idx):
+        if corrected:
+            return (f"  aggregate_sums_u16_corrected(OutReg, "
+                    f"corrections[{outreg_idx}], sum);")
+        return "  aggregate_sums_u16(OutReg, sum);"
+
+    def agg_call_inreg(outreg_idx):
+        # For bit == LANE_BITS the loaded InReg is the OutReg (raw copy).
+        if corrected:
+            return (f"  aggregate_sums_u16_corrected(InReg, "
+                    f"corrections[{outreg_idx}], sum);")
+        return "  aggregate_sums_u16(InReg, sum);"
+
+    lines.append(f"static void __SIMD_fastunpack{bit}_16{suffix}("
                  f"const {I['reg']} *__restrict__ in,")
-    lines.append(f"    uint16_t *__restrict__ _out, {I['reg']} *__restrict__ sum) {{")
+    lines.append(f"    uint16_t *__restrict__ _out{extra_param}, "
+                 f"{I['reg']} *__restrict__ sum) {{")
     lines.append("  (void)_out;")
     lines.append(f"  {I['reg']} InReg = {I['load']}(in);")
 
     if bit == LANE_BITS:
-        lines.append("  aggregate_sums_u16(InReg, sum);")
+        lines.append(agg_call_inreg(0))
         for i in range(1, total_values):
             lines.append(f"  InReg = {I['load']}(++in);")
-            lines.append("  aggregate_sums_u16(InReg, sum);")
+            lines.append(agg_call_inreg(i))
         lines.append("}")
         lines.append("")
         return "\n".join(lines)
@@ -188,7 +224,7 @@ def gen_unpack_function(bit, I):
                 lines.append(f"  OutReg = {I['and_fn']}(InReg, mask);")
             else:
                 lines.append(f"  OutReg = {I['and_fn']}({I['srli']}(InReg, {bit_pos}), mask);")
-            lines.append("  aggregate_sums_u16(OutReg, sum);")
+            lines.append(agg_call(v))
             lines.append("")
             bit_pos += bit
         else:
@@ -201,7 +237,7 @@ def gen_unpack_function(bit, I):
                 lines.append(f"      {I['or_fn']}(OutReg, {I['and_fn']}({I['slli']}(InReg, {bit} - {need}), mask));")
             else:
                 lines.append(f"  OutReg = {I['and_fn']}(InReg, mask);")
-            lines.append("  aggregate_sums_u16(OutReg, sum);")
+            lines.append(agg_call(v))
             lines.append("")
             bit_pos = need
 
@@ -252,6 +288,34 @@ def gen_dispatchers(I):
     lines.append("  }")
     lines.append("}")
     lines.append("")
+
+    # Corrected unpack dispatcher (per-OutReg corrections folded into aggregation)
+    outregs_per_block = I['block'] // I['lanes']
+    lines.append(f"void usimdunpack_u16_corrected(const {I['reg']} *__restrict__ in,")
+    lines.append(f"                                uint16_t *__restrict__ out,")
+    lines.append(f"                                const uint32_t bit,")
+    lines.append(f"                                const {I['reg']} *__restrict__ corrections,")
+    lines.append(f"                                {I['reg']} *__restrict__ sum) {{")
+    lines.append("  using namespace simdunaligned_u16;")
+    lines.append("  (void)out;")
+    lines.append("  switch (bit) {")
+    lines.append("  case 0:")
+    lines.append("    // b==0: every packed value is 0, every real value lives in `corrections`.")
+    lines.append("    // corrections[lane] = exc (since exc - 0 = exc) at exception lanes, 0 elsewhere.")
+    lines.append(f"    for (size_t i = 0; i < {outregs_per_block}; ++i) {{")
+    lines.append("      aggregate_sums_u16(corrections[i], sum);")
+    lines.append("    }")
+    lines.append("    (void)in;")
+    lines.append("    return;")
+    for b in range(1, MAX_BIT + 1):
+        lines.append(f"  case {b}:")
+        lines.append(f"    __SIMD_fastunpack{b}_16_corrected(in, out, corrections, sum);")
+        lines.append("    return;")
+    lines.append("  default:")
+    lines.append("    break;")
+    lines.append("  }")
+    lines.append("}")
+    lines.append("")
     lines.append("} // namespace FastPForLib")
     lines.append("")
     return "\n".join(lines)
@@ -278,7 +342,10 @@ def main():
         out.append(gen_pack_function(bit, I))
 
     for bit in range(1, MAX_BIT + 1):
-        out.append(gen_unpack_function(bit, I))
+        out.append(gen_unpack_function(bit, I, corrected=False))
+
+    for bit in range(1, MAX_BIT + 1):
+        out.append(gen_unpack_function(bit, I, corrected=True))
 
     out.append(gen_dispatchers(I))
 

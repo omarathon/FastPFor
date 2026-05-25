@@ -20,6 +20,18 @@ static inline void aggregate_sums_u16(__m256i OutReg, __m256i* sum) {
     *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(OutReg, kZero));
 }
 
+// Corrected variant: fold per-OutReg exception correction into the aggregation.
+// `correction` holds (exc - unpacked_gap) at exception lanes (mod 2^16) and 0
+// elsewhere. uint16 add wraps the same way the codec encodes, so non-exception
+// lanes are unchanged and exception lanes become exc.
+static inline void aggregate_sums_u16_corrected(__m256i OutReg,
+                                                 __m256i correction,
+                                                 __m256i* sum) {
+    OutReg = _mm256_add_epi16(OutReg, correction);
+    *sum = _mm256_add_epi32(*sum, _mm256_unpacklo_epi16(OutReg, kZero));
+    *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(OutReg, kZero));
+}
+
 static void SIMD_nullunpacker16(const __m256i *__restrict__,
                                 uint16_t *__restrict__) {
 }
@@ -1968,6 +1980,1163 @@ static void __SIMD_fastunpack16_16(const __m256i *__restrict__ in,
   InReg = _mm256_loadu_si256(++in);
   aggregate_sums_u16(InReg, sum);
 }
+static void __SIMD_fastunpack1_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 1) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 1), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 3), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 5), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 7), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 9), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 10), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 11), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 12), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 13), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 14), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 15), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack2_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 2) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 10), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 12), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 14), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 10), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 12), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 14), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack3_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 3) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 3), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 9), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 12), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 15);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 3 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 5), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 11), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 3 - 1), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 1), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 7), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 10), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 13), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack4_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 4) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 12), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 12), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 12), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 12), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack5_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 5) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 5), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 10), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 15);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 5 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 9), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 5 - 3), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 3), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 13);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 5 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 7), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 5 - 1), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 1), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 11), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack6_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 6) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 6 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 6 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 10), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 6 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 6 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 10), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack7_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 7) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 7), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 7 - 5), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 5), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 7 - 3), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 3), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 7 - 1), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 1), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 15);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 7 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 13);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 7 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 11);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 7 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 9), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack8_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 8) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 8), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack9_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 9) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 9);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 9 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 11);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 9 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 13);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 9 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 15);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 9 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 9 - 1), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 1), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 9 - 3), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 3), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 9 - 5), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 5), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 9 - 7), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 7), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack10_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 10) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 10 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 10 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 10 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 10 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 10 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 10 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 10 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 10 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 6), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack11_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 11) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 11);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 6);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 1), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 1), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 7), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 7);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 13);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 3), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 3), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 9), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 9);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 15);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 10), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 11 - 5), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 5), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack12_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 12) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 12 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 12 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 12 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 12 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 12 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 12 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 12 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 12 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 4), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack13_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 13) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 13);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 10), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 7), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 7);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 4);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 1), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 1), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 11), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 11);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 5), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 5);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 15);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 12), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 9), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 9);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 6);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 13 - 3), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 3), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack14_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 14) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 12), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 10), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 6);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 4);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  InReg = _mm256_loadu_si256(++in);
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 12), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 10), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 6);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 4);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 14 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 2), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack15_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  __m256i OutReg;
+  const __m256i mask = _mm256_set1_epi16((1U << 15) - 1);
+
+  OutReg = _mm256_and_si256(InReg, mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[0], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 15);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 14), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[1], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 14);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 13), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[2], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 13);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 12), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[3], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 12);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 11), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[4], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 11);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 10), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[5], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 10);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 9), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[6], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 9);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 8), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[7], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 8);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 7), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[8], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 7);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 6), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[9], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 6);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 5), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[10], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 5);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 4), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[11], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 4);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 3), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[12], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 3);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 2), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[13], sum);
+
+  OutReg = _mm256_srli_epi16(InReg, 2);
+  InReg = _mm256_loadu_si256(++in);
+  OutReg =
+      _mm256_or_si256(OutReg, _mm256_and_si256(_mm256_slli_epi16(InReg, 15 - 1), mask));
+  aggregate_sums_u16_corrected(OutReg, corrections[14], sum);
+
+  OutReg = _mm256_and_si256(_mm256_srli_epi16(InReg, 1), mask);
+  aggregate_sums_u16_corrected(OutReg, corrections[15], sum);
+
+}
+static void __SIMD_fastunpack16_16_corrected(const __m256i *__restrict__ in,
+    uint16_t *__restrict__ _out, const __m256i *__restrict__ corrections, __m256i *__restrict__ sum) {
+  (void)_out;
+  __m256i InReg = _mm256_loadu_si256(in);
+  aggregate_sums_u16_corrected(InReg, corrections[0], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[1], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[2], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[3], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[4], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[5], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[6], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[7], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[8], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[9], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[10], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[11], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[12], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[13], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[14], sum);
+  InReg = _mm256_loadu_si256(++in);
+  aggregate_sums_u16_corrected(InReg, corrections[15], sum);
+}
 } // namespace simdunaligned_u16
 
 void usimdpack_u16(const uint16_t *__restrict__ in, __m256i *__restrict__ out,
@@ -2084,6 +3253,75 @@ void usimdunpack_u16(const __m256i *__restrict__ in, uint16_t *__restrict__ out,
     return;
   case 16:
     __SIMD_fastunpack16_16(in, out, sum);
+    return;
+  default:
+    break;
+  }
+}
+
+void usimdunpack_u16_corrected(const __m256i *__restrict__ in,
+                                uint16_t *__restrict__ out,
+                                const uint32_t bit,
+                                const __m256i *__restrict__ corrections,
+                                __m256i *__restrict__ sum) {
+  using namespace simdunaligned_u16;
+  (void)out;
+  switch (bit) {
+  case 0:
+    // b==0: every packed value is 0, every real value lives in `corrections`.
+    // corrections[lane] = exc (since exc - 0 = exc) at exception lanes, 0 elsewhere.
+    for (size_t i = 0; i < 16; ++i) {
+      aggregate_sums_u16(corrections[i], sum);
+    }
+    (void)in;
+    return;
+  case 1:
+    __SIMD_fastunpack1_16_corrected(in, out, corrections, sum);
+    return;
+  case 2:
+    __SIMD_fastunpack2_16_corrected(in, out, corrections, sum);
+    return;
+  case 3:
+    __SIMD_fastunpack3_16_corrected(in, out, corrections, sum);
+    return;
+  case 4:
+    __SIMD_fastunpack4_16_corrected(in, out, corrections, sum);
+    return;
+  case 5:
+    __SIMD_fastunpack5_16_corrected(in, out, corrections, sum);
+    return;
+  case 6:
+    __SIMD_fastunpack6_16_corrected(in, out, corrections, sum);
+    return;
+  case 7:
+    __SIMD_fastunpack7_16_corrected(in, out, corrections, sum);
+    return;
+  case 8:
+    __SIMD_fastunpack8_16_corrected(in, out, corrections, sum);
+    return;
+  case 9:
+    __SIMD_fastunpack9_16_corrected(in, out, corrections, sum);
+    return;
+  case 10:
+    __SIMD_fastunpack10_16_corrected(in, out, corrections, sum);
+    return;
+  case 11:
+    __SIMD_fastunpack11_16_corrected(in, out, corrections, sum);
+    return;
+  case 12:
+    __SIMD_fastunpack12_16_corrected(in, out, corrections, sum);
+    return;
+  case 13:
+    __SIMD_fastunpack13_16_corrected(in, out, corrections, sum);
+    return;
+  case 14:
+    __SIMD_fastunpack14_16_corrected(in, out, corrections, sum);
+    return;
+  case 15:
+    __SIMD_fastunpack15_16_corrected(in, out, corrections, sum);
+    return;
+  case 16:
+    __SIMD_fastunpack16_16_corrected(in, out, corrections, sum);
     return;
   default:
     break;

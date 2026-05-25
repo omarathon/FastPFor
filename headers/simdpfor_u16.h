@@ -136,6 +136,14 @@ public:
     usimdunpack_u16(reinterpret_cast<const __m256i *>(source), out, bit, sum);
   }
 
+  void unpackblock_corrected(const uint32_t *source, uint16_t *out,
+                             const uint32_t bit,
+                             const __m256i *corrections, __m256i *sum) {
+    (void)out;
+    usimdunpack_u16_corrected(reinterpret_cast<const __m256i *>(source), out,
+                              bit, corrections, sum);
+  }
+
   void encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
                    size_t &nvalue) {
     *out++ = static_cast<uint32_t>(len);
@@ -182,6 +190,42 @@ public:
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
     const auto out_sum =
         static_cast<uint32_t>(_mm_cvtsi128_si32(s) + delta_sum);
+
+    // store sum as uint32 in 2 uint16 slots after decoded data
+    initout[nvalue] = static_cast<uint16_t>(out_sum & 0xFFFF);
+    initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
+
+    return in;
+  }
+
+  // Corrected variant of decodeArray: folds exception correction into the
+  // SIMD aggregation via per-OutReg correction masks. Removes the post-loop
+  // delta_sum step entirely.
+  const uint32_t *decodeArrayCorrected(const uint32_t *in, const size_t len,
+                                        uint16_t *out, size_t &nvalue) {
+    nvalue = *in++;
+    if (nvalue == 0) {
+      return in;
+    }
+    const uint32_t *const finalin = in + len;
+    size_t totalnvalue(0);
+    __m256i sum = _mm256_setzero_si256();
+    uint16_t *initout = out;
+    while (totalnvalue < nvalue) {
+      size_t thisnvalue = nvalue - totalnvalue;
+      in = __decodeArrayCorrected(in, finalin - in, out, thisnvalue, &sum);
+      out += thisnvalue;
+      totalnvalue += thisnvalue;
+    }
+    nvalue = totalnvalue;
+
+    // 256-bit horizontal sum: fold 256->128, then 128->scalar
+    __m128i lo = _mm256_castsi256_si128(sum);
+    __m128i hi = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
+    const auto out_sum = static_cast<uint32_t>(_mm_cvtsi128_si32(s));
 
     // store sum as uint32 in 2 uint16 slots after decoded data
     initout[nvalue] = static_cast<uint16_t>(out_sum & 0xFFFF);
@@ -253,6 +297,41 @@ public:
     return except + except_offset;
   }
 
+  // Corrected variant: same control flow as __decodeArray, but each block
+  // uses uncompressblockPFOR_u16_corrected which folds exception correction
+  // into the SIMD aggregation (no delta_sum needed).
+  const uint32_t *__decodeArrayCorrected(const uint32_t *in, const size_t len,
+                                          uint16_t *out, size_t &nvalue,
+                                          __m256i *sum) {
+    (void)len;
+    nvalue = *in++;
+    checkifdivisibleby(nvalue, BlockSize);
+    const uint32_t b = *in++;
+    const uint32_t *__restrict__ except =
+        in + nvalue * b / 32 + nvalue / BlockSize;
+
+    const uint32_t bitsforfirstexcept = blocksizeinbits;
+    const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
+
+    size_t except_offset = 0;
+
+    for (size_t k = 0; k < nvalue / BlockSize; ++k) {
+      const uint32_t *const headerin(in);
+      ++in;
+      const uint32_t firstexcept = *headerin & firstexceptmask;
+      const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
+      const size_t end_except_idx = exceptindex;
+
+      uncompressblockPFOR_u16_corrected(in, out, b, except, except_offset,
+                                         end_except_idx, firstexcept, sum);
+      except_offset = end_except_idx;
+      in += (BlockSize * b) / 32;
+      out += BlockSize;
+    }
+
+    return except + except_offset;
+  }
+
   void uncompressblockPFOR_u16(const uint32_t *__restrict__ inputbegin,
                                uint16_t *__restrict__ outputbegin,
                                const uint32_t b,
@@ -288,6 +367,62 @@ public:
       *delta_sum += (static_cast<int32_t>(exc_val) - static_cast<int32_t>(gap));
       idx++;
     }
+  }
+
+  // Corrected variant: pre-computes per-OutReg correction masks from the
+  // exception chain, then runs the corrected SIMD unpack-and-aggregate path.
+  // Exception correction is folded into the hot loop (one uint16 ADD per
+  // OutReg) instead of a post-loop scalar delta.
+  void uncompressblockPFOR_u16_corrected(
+      const uint32_t *__restrict__ inputbegin,
+      uint16_t *__restrict__ outputbegin, const uint32_t b,
+      const uint32_t *__restrict__ except_base, size_t start_except_idx,
+      size_t end_except_idx, size_t next_exception, __m256i *sum) {
+    if (b == 16) {
+      // raw data: no exceptions possible at b=16. Same hot loop as the
+      // non-corrected variant.
+      const uint16_t *raw = reinterpret_cast<const uint16_t *>(inputbegin);
+      __m256i zero = _mm256_setzero_si256();
+      for (size_t i = 0; i < BlockSize; i += 16) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i *>(raw + i));
+        *sum = _mm256_add_epi32(*sum, _mm256_unpacklo_epi16(v, zero));
+        *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(v, zero));
+      }
+      return;
+    }
+
+    if (start_except_idx == end_except_idx) {
+      // Exception-free block: skip the corrections setup and the per-OutReg
+      // add — fall back to the standard fused unpack (matches the encoder's
+      // exception-free fast path).
+      unpackblock(inputbegin, outputbegin, b, sum);
+      return;
+    }
+
+    // Stack-local correction array. Layout: one uint16 per element of the
+    // block; nonzero only at exception positions. Read as 16 __m256i by the
+    // corrected SIMD unpack (one register per OutReg).
+    alignas(32) uint16_t corrections_data[BlockSize] = {0};
+
+    // Pre-compute corrections by walking the gap chain. At each exception
+    // position the unpacked value is `gap` (or low-b bits of the value, for
+    // the last exception). The correction we add (mod 2^16) is `exc - gap`,
+    // so corrected_lane = unpacked + correction = exc.
+    const uint16_t *packed_data =
+        reinterpret_cast<const uint16_t *>(inputbegin);
+    for (size_t idx = start_except_idx; idx != end_except_idx; ++idx) {
+      const uint32_t gap =
+          read_gap_simd_layout_u16(packed_data, b, next_exception);
+      const uint16_t exc_val = static_cast<uint16_t>(except_base[idx]);
+      corrections_data[next_exception] =
+          static_cast<uint16_t>(exc_val - static_cast<uint16_t>(gap));
+      next_exception = next_exception + static_cast<size_t>(gap) + 1;
+    }
+
+    unpackblock_corrected(
+        inputbegin, outputbegin, b,
+        reinterpret_cast<const __m256i *>(corrections_data), sum);
   }
 
   static inline uint32_t read_gap_simd_layout_u16(const uint16_t *input,
