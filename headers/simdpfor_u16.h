@@ -144,6 +144,14 @@ public:
                               bit, corrections, sum);
   }
 
+  void unpackblock_corrected_uniform(const uint32_t *source, uint16_t *out,
+                                      const uint32_t bit, __m256i anchor,
+                                      __m256i *sum) {
+    (void)out;
+    usimdunpack_u16_corrected_uniform(
+        reinterpret_cast<const __m256i *>(source), out, bit, anchor, sum);
+  }
+
   void unpackblock_corrected_delta_local(const uint32_t *source, uint16_t *out,
                                           const uint32_t bit,
                                           const __m256i *corrections,
@@ -331,6 +339,143 @@ public:
     const auto out_sum = static_cast<uint32_t>(_mm_cvtsi128_si32(s));
 
     // store sum as uint32 in 2 uint16 slots after decoded data
+    initout[nvalue] = static_cast<uint16_t>(out_sum & 0xFFFF);
+    initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
+
+    return in;
+  }
+
+  // ── FoR-global helpers ──────────────────────────────────────────────────────
+
+  // Per-block helper for FoR-global decode. The encoder stored residuals =
+  // (original - anchor) for each block; the decoder adds anchor back via the
+  // corrections array. Pre-fills corrections with anchor broadcast, then adds
+  // (exc_val - gap) at exception positions so the SIMD add reconstructs the
+  // original values. b==16 is handled separately (raw residuals; no gap chain).
+  void uncompressblockPFOR_u16_corrected_for(
+      const uint32_t *__restrict__ inputbegin,
+      uint16_t *__restrict__ outputbegin, const uint32_t b,
+      const uint32_t *__restrict__ except_base, size_t start_except_idx,
+      size_t end_except_idx, size_t next_exception,
+      uint16_t anchor, __m256i *sum) {
+
+    const __m256i anchor_bcast = _mm256_set1_epi16(static_cast<short>(anchor));
+
+    if (b == 16) {
+      // Raw residuals, no gap-chain. Add anchor to each value before
+      // aggregating: residual + anchor = original (all mod 2^16).
+      const uint16_t *raw = reinterpret_cast<const uint16_t *>(inputbegin);
+      const __m256i zero = _mm256_setzero_si256();
+      for (size_t i = 0; i < BlockSize; i += 16) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i *>(raw + i));
+        v = _mm256_add_epi16(v, anchor_bcast);
+        *sum = _mm256_add_epi32(*sum, _mm256_unpacklo_epi16(v, zero));
+        *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(v, zero));
+      }
+      return;
+    }
+
+    if (start_except_idx == end_except_idx) {
+      // Exception-free (common for FoR): uniform anchor, no corrections array.
+      unpackblock_corrected_uniform(inputbegin, outputbegin, b,
+                                     anchor_bcast, sum);
+      return;
+    }
+
+    // With exceptions (rare for FoR): pre-fill corrections with anchor, then
+    // += (exc_val - gap) at exception positions.
+    alignas(32) uint16_t corrections_data[BlockSize];
+    {
+      __m256i *cd = reinterpret_cast<__m256i *>(corrections_data);
+      for (int r = 0; r < BlockSizeInUnitsOfPackSize; ++r)
+        _mm256_store_si256(cd + r, anchor_bcast);
+    }
+    const uint16_t *packed_data =
+        reinterpret_cast<const uint16_t *>(inputbegin);
+    for (size_t idx = start_except_idx; idx != end_except_idx; ++idx) {
+      const uint32_t gap =
+          read_gap_simd_layout_u16(packed_data, b, next_exception);
+      const uint16_t exc_val = static_cast<uint16_t>(except_base[idx]);
+      corrections_data[next_exception] +=
+          static_cast<uint16_t>(exc_val - static_cast<uint16_t>(gap));
+      next_exception = next_exception + static_cast<size_t>(gap) + 1;
+    }
+    unpackblock_corrected(
+        inputbegin, outputbegin, b,
+        reinterpret_cast<const __m256i *>(corrections_data), sum);
+  }
+
+  // Inner decode loop for FoR-global. block_anchors[k] is the per-block anchor
+  // for block k within this __encodeArray chunk.
+  const uint32_t *__decodeArrayCorrectedFor(const uint32_t *in,
+                                             const size_t len, uint16_t *out,
+                                             size_t &nvalue,
+                                             const uint16_t *block_anchors,
+                                             __m256i *sum) {
+    (void)len;
+    nvalue = *in++;
+    checkifdivisibleby(nvalue, BlockSize);
+    const uint32_t b = *in++;
+    const uint32_t *__restrict__ except =
+        in + nvalue * b / 32 + nvalue / BlockSize;
+
+    const uint32_t bitsforfirstexcept = blocksizeinbits;
+    const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
+
+    size_t except_offset = 0;
+
+    for (size_t k = 0; k < nvalue / BlockSize; ++k) {
+      const uint32_t *const headerin(in);
+      ++in;
+      const uint32_t firstexcept = *headerin & firstexceptmask;
+      const uint32_t exceptindex = *headerin >> bitsforfirstexcept;
+      const size_t end_except_idx = exceptindex;
+
+      uncompressblockPFOR_u16_corrected_for(in, out, b, except, except_offset,
+                                             end_except_idx, firstexcept,
+                                             block_anchors[k], sum);
+      except_offset = end_except_idx;
+      in += (BlockSize * b) / 32;
+      out += BlockSize;
+    }
+
+    return except + except_offset;
+  }
+
+  // Outer decode entry for FoR-global. `anchors` is an array of per-block
+  // (256-element) anchor values, indexed globally across all inner chunks.
+  const uint32_t *decodeArrayCorrectedFor(const uint32_t *in,
+                                           const size_t len, uint16_t *out,
+                                           size_t &nvalue,
+                                           const uint16_t *anchors) {
+    nvalue = *in++;
+    if (nvalue == 0) {
+      return in;
+    }
+    const uint32_t *const finalin = in + len;
+    size_t totalnvalue(0);
+    __m256i sum = _mm256_setzero_si256();
+    uint16_t *initout = out;
+    size_t anchor_idx = 0;
+
+    while (totalnvalue < nvalue) {
+      size_t thisnvalue = nvalue - totalnvalue;
+      in = __decodeArrayCorrectedFor(in, finalin - in, out, thisnvalue,
+                                      anchors + anchor_idx, &sum);
+      anchor_idx += thisnvalue / BlockSize;
+      out += thisnvalue;
+      totalnvalue += thisnvalue;
+    }
+    nvalue = totalnvalue;
+
+    __m128i lo = _mm256_castsi256_si128(sum);
+    __m128i hi = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
+    const auto out_sum = static_cast<uint32_t>(_mm_cvtsi128_si32(s));
+
     initout[nvalue] = static_cast<uint16_t>(out_sum & 0xFFFF);
     initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
 

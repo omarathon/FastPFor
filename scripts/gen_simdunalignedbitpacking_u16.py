@@ -243,14 +243,17 @@ def gen_unpack_function(bit, I, mode='plain'):
     mode:
       'plain'                 — aggregate_sums_u16(OutReg, sum)
       'corrected'             — aggregate_sums_u16_corrected(OutReg, correction, sum)
+      'corrected_uniform'     — like corrected but takes a single broadcast anchor
+                                instead of a per-OutReg corrections array. Used by
+                                FoR-global (all OutRegs share the same anchor).
       'corrected_delta_local' — correction → zigzag_dec → per-OutReg prefix sum
                                 → aggregate. Used by delta-local codec.
       'corrected_delta_carry' — correction → zigzag_dec → prefix_sum → +carry
                                 → update carry → aggregate. Used by delta-carry
                                 codec.
     """
-    assert mode in ('plain', 'corrected', 'corrected_delta_local',
-                    'corrected_delta_carry')
+    assert mode in ('plain', 'corrected', 'corrected_uniform',
+                    'corrected_delta_local', 'corrected_delta_carry')
 
     lines = []
     lanes = I['lanes']
@@ -263,15 +266,20 @@ def gen_unpack_function(bit, I, mode='plain'):
     suffix = {
         'plain': '',
         'corrected': '_corrected',
+        'corrected_uniform': '_corrected_uniform',
         'corrected_delta_local': '_corrected_delta_local',
         'corrected_delta_carry': '_corrected_delta_carry',
     }[mode]
-    needs_corrections = mode != 'plain'
+    needs_corrections = mode in ('corrected', 'corrected_delta_local',
+                                  'corrected_delta_carry')
+    needs_anchor = mode == 'corrected_uniform'
     needs_carry = mode == 'corrected_delta_carry'
 
     extra_param = ''
     if needs_corrections:
         extra_param += f", const {I['reg']} *__restrict__ corrections"
+    if needs_anchor:
+        extra_param += f", {I['reg']} anchor"
     if needs_carry:
         extra_param += f", {I['reg']} *__restrict__ carry"
 
@@ -281,6 +289,8 @@ def gen_unpack_function(bit, I, mode='plain'):
         if mode == 'corrected':
             return (f"  aggregate_sums_u16_corrected({reg_name}, "
                     f"corrections[{outreg_idx}], sum);")
+        if mode == 'corrected_uniform':
+            return f"  aggregate_sums_u16_corrected({reg_name}, anchor, sum);"
         if mode == 'corrected_delta_local':
             return (f"  agg_pipeline_local({reg_name}, "
                     f"corrections[{outreg_idx}], sum);")
@@ -421,6 +431,33 @@ def gen_dispatchers(I):
     lines.append("}")
     lines.append("")
 
+    # corrected_uniform dispatcher: single broadcast anchor for all OutRegs.
+    # Used by FoR-global exception-free path — no corrections array needed.
+    lines.append(f"void usimdunpack_u16_corrected_uniform(const {I['reg']} *__restrict__ in,")
+    lines.append(f"                                        uint16_t *__restrict__ out,")
+    lines.append(f"                                        const uint32_t bit,")
+    lines.append(f"                                        {I['reg']} anchor,")
+    lines.append(f"                                        {I['reg']} *__restrict__ sum) {{")
+    lines.append("  using namespace simdunaligned_u16;")
+    lines.append("  (void)out;")
+    lines.append("  switch (bit) {")
+    lines.append("  case 0:")
+    lines.append("    // b==0: all residuals are 0; anchor is the FoR base for every element.")
+    lines.append(f"    for (size_t i = 0; i < {outregs_per_block}; ++i) {{")
+    lines.append("      aggregate_sums_u16(anchor, sum);")
+    lines.append("    }")
+    lines.append("    (void)in;")
+    lines.append("    return;")
+    for b in range(1, MAX_BIT + 1):
+        lines.append(f"  case {b}:")
+        lines.append(f"    __SIMD_fastunpack{b}_16_corrected_uniform(in, out, anchor, sum);")
+        lines.append("    return;")
+    lines.append("  default:")
+    lines.append("    break;")
+    lines.append("  }")
+    lines.append("}")
+    lines.append("")
+
     # AVX2-only: delta-local / delta-carry dispatchers.
     if I['width'] == 256:
         # corrected_delta_local dispatcher
@@ -508,6 +545,9 @@ def main():
 
     for bit in range(1, MAX_BIT + 1):
         out.append(gen_unpack_function(bit, I, mode='corrected'))
+
+    for bit in range(1, MAX_BIT + 1):
+        out.append(gen_unpack_function(bit, I, mode='corrected_uniform'))
 
     if I['width'] == 256:
         for bit in range(1, MAX_BIT + 1):

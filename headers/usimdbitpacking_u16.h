@@ -23,6 +23,15 @@ void usimdunpack_u16_corrected(const __m256i *__restrict__ in,
                                const __m256i *__restrict__ corrections,
                                __m256i *__restrict__ sum);
 
+// Uniform-corrected variant: like corrected but takes a single broadcast
+// `anchor` applied to every OutReg. Used by FoR-global exception-free path —
+// eliminates the 512-byte corrections array and 16-store fill per block.
+void usimdunpack_u16_corrected_uniform(const __m256i *__restrict__ in,
+                                        uint16_t *__restrict__ out,
+                                        uint32_t bit,
+                                        __m256i anchor,
+                                        __m256i *__restrict__ sum);
+
 // Corrected + LOCAL delta variant: per-OutReg pipeline is correction → zigzag
 // decode → per-OutReg prefix sum → aggregate. Each OutReg holds 16 consecutive
 // elements; lane 0 is a zigzag-encoded anchor (delta from 0), lanes 1..15 are

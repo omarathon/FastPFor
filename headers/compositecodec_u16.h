@@ -166,6 +166,39 @@ public:
     return in2;
   }
 
+  // FoR-global variant: routes the SIMDPFor portion through the FoR-corrected
+  // path (each block's anchor pre-fills the corrections array). The VB tail was
+  // encoded without anchor subtraction, so it decodes via the plain path.
+  const uint32_t *decodeArrayCorrectedFor(const uint32_t *in,
+                                           const size_t length, uint16_t *out,
+                                           size_t &nvalue,
+                                           const uint16_t *anchors) {
+    if (nvalue == 0)
+      return in;
+    uint16_t *initout(out);
+    size_t mynvalue1 = nvalue;
+    const uint32_t *in2 =
+        codec1.decodeArrayCorrectedFor(in, length, out, mynvalue1, anchors);
+    if (length + in > in2) {
+      uint32_t sum1 = static_cast<uint32_t>(initout[mynvalue1]) |
+                      (static_cast<uint32_t>(initout[mynvalue1 + 1]) << 16);
+      size_t nvalue2 = nvalue - mynvalue1;
+      uint16_t *initout2 = out + mynvalue1;
+      // VB tail elements were stored as-is (no anchor subtraction).
+      const uint32_t *in3 =
+          codec2.decodeArray(in2, length - (in2 - in), initout2, nvalue2);
+      nvalue = mynvalue1 + nvalue2;
+      uint32_t sum2 = static_cast<uint32_t>(initout2[nvalue2]) |
+                      (static_cast<uint32_t>(initout2[nvalue2 + 1]) << 16);
+      uint32_t sum = sum1 + sum2;
+      initout[nvalue] = static_cast<uint16_t>(sum & 0xFFFF);
+      initout[nvalue + 1] = static_cast<uint16_t>(sum >> 16);
+      return in3;
+    }
+    nvalue = mynvalue1;
+    return in2;
+  }
+
   std::string name() const { return codec1.name() + "+" + codec2.name(); }
 };
 
