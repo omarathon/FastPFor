@@ -208,8 +208,9 @@ public:
   // (no VB tail). See SIMDPForU16::encodeArrayFlat for format details.
 
   void encodeArrayFlat(const uint16_t *in, const size_t len, uint32_t *out,
-                       size_t &nvalue) {
-    codec1.encodeArrayFlat(in, len, out, nvalue);
+                       size_t &nvalue,
+                       size_t window_size = SIMDPForU16::BlockSize) {
+    codec1.encodeArrayFlat(in, len, out, nvalue, window_size);
   }
 
   const uint32_t *decodeArrayFlatCorrected(const uint32_t *in,
@@ -221,8 +222,10 @@ public:
   const uint32_t *decodeArrayFlatCorrectedFor(const uint32_t *in,
                                                const size_t length,
                                                uint16_t *out, size_t &nvalue,
-                                               const uint16_t *anchors) {
-    return codec1.decodeArrayFlatCorrectedFor(in, length, out, nvalue, anchors);
+                                               const uint16_t *anchors,
+                                               size_t window_size = SIMDPForU16::BlockSize) {
+    return codec1.decodeArrayFlatCorrectedFor(in, length, out, nvalue, anchors,
+                                               window_size);
   }
 
   std::string name() const { return codec1.name() + "+" + codec2.name(); }

@@ -53,6 +53,35 @@ void usimdunpack_u16_corrected_delta_carry(const __m256i *__restrict__ in,
                                             __m256i *__restrict__ carry,
                                             __m256i *__restrict__ sum);
 
+// Sub-block variants for W=32/64/128 (2/4/8 OutRegs). Used by FoR-global
+// with forWindowSize_=32/64/128. Same semantics as the 256-element versions.
+void usimdpack_u16_n32(const uint16_t *__restrict__ in, __m256i *__restrict__ out, uint32_t bit);
+void usimdpack_u16_n64(const uint16_t *__restrict__ in, __m256i *__restrict__ out, uint32_t bit);
+void usimdpack_u16_n128(const uint16_t *__restrict__ in, __m256i *__restrict__ out, uint32_t bit);
+
+void usimdunpack_u16_corrected_uniform_n32(const __m256i *__restrict__ in,
+                                            uint16_t *__restrict__ out, uint32_t bit,
+                                            __m256i anchor, __m256i *__restrict__ sum);
+void usimdunpack_u16_corrected_uniform_n64(const __m256i *__restrict__ in,
+                                            uint16_t *__restrict__ out, uint32_t bit,
+                                            __m256i anchor, __m256i *__restrict__ sum);
+void usimdunpack_u16_corrected_uniform_n128(const __m256i *__restrict__ in,
+                                             uint16_t *__restrict__ out, uint32_t bit,
+                                             __m256i anchor, __m256i *__restrict__ sum);
+
+void usimdunpack_u16_corrected_n32(const __m256i *__restrict__ in,
+                                    uint16_t *__restrict__ out, uint32_t bit,
+                                    const __m256i *__restrict__ corrections,
+                                    __m256i *__restrict__ sum);
+void usimdunpack_u16_corrected_n64(const __m256i *__restrict__ in,
+                                    uint16_t *__restrict__ out, uint32_t bit,
+                                    const __m256i *__restrict__ corrections,
+                                    __m256i *__restrict__ sum);
+void usimdunpack_u16_corrected_n128(const __m256i *__restrict__ in,
+                                     uint16_t *__restrict__ out, uint32_t bit,
+                                     const __m256i *__restrict__ corrections,
+                                     __m256i *__restrict__ sum);
+
 } // namespace FastPForLib
 
 #endif /* USIMDBITPACKING_U16_H_ */

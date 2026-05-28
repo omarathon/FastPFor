@@ -170,7 +170,7 @@ static inline void aggregate_sums_u16_corrected({I['reg']} OutReg,
 """
 
 
-def gen_pack_function(bit, I):
+def gen_pack_function(bit, I, name_suffix=""):
     """Generate pack function for given bit width."""
     lines = []
     lanes = I['lanes']
@@ -178,13 +178,13 @@ def gen_pack_function(bit, I):
     total_inputs = block // lanes
 
     if bit == 0:
-        lines.append(f"static void __SIMD_fastpackwithoutmask0_16("
+        lines.append(f"static void __SIMD_fastpackwithoutmask0_16{name_suffix}("
                      f"const uint16_t *__restrict__, {I['reg']} *__restrict__) {{")
         lines.append("}")
         lines.append("")
         return "\n".join(lines)
 
-    lines.append(f"static void __SIMD_fastpackwithoutmask{bit}_16("
+    lines.append(f"static void __SIMD_fastpackwithoutmask{bit}_16{name_suffix}("
                  f"const uint16_t *__restrict__ _in,")
     lines.append(f"    {I['reg']} *__restrict__ out) {{")
     lines.append(f"  const {I['reg']} *in = reinterpret_cast<const {I['reg']} *>(_in);")
@@ -237,7 +237,7 @@ def gen_pack_function(bit, I):
     return "\n".join(lines)
 
 
-def gen_unpack_function(bit, I, mode='plain'):
+def gen_unpack_function(bit, I, mode='plain', name_suffix=''):
     """Generate fused unpack+sum function for given bit width.
 
     mode:
@@ -308,7 +308,7 @@ def gen_unpack_function(bit, I, mode='plain'):
         # pass it through the same helper.
         return agg_call("InReg", outreg_idx)
 
-    lines.append(f"static void __SIMD_fastunpack{bit}_16{suffix}("
+    lines.append(f"static void __SIMD_fastunpack{bit}_16{suffix}{name_suffix}("
                  f"const {I['reg']} *__restrict__ in,")
     lines.append(f"    uint16_t *__restrict__ _out{extra_param}, "
                  f"{I['reg']} *__restrict__ sum) {{")
@@ -520,6 +520,80 @@ def gen_dispatchers(I):
     return "\n".join(lines)
 
 
+def gen_sub_block_dispatchers(I, W, name_suffix):
+    """Generate pack + corrected + corrected_uniform dispatchers for a sub-block size W."""
+    n_outreg = W // I['lanes']
+    lines = []
+    lines.append(f"namespace FastPForLib {{")
+    lines.append("")
+
+    # Pack dispatcher
+    lines.append(f"void usimdpack_u16_n{W}(const uint16_t *__restrict__ in, {I['reg']} *__restrict__ out,")
+    lines.append(f"                        const uint32_t bit) {{")
+    lines.append("  using namespace simdunaligned_u16;")
+    lines.append("  switch (bit) {")
+    for b in range(MAX_BIT + 1):
+        lines.append(f"  case {b}:")
+        lines.append(f"    __SIMD_fastpackwithoutmask{b}_16{name_suffix}(in, out);")
+        lines.append("    return;")
+    lines.append("  default: break;")
+    lines.append("  }")
+    lines.append("}")
+    lines.append("")
+
+    # corrected_uniform dispatcher (fast path: uniform anchor, no exception array)
+    lines.append(f"void usimdunpack_u16_corrected_uniform_n{W}(const {I['reg']} *__restrict__ in,")
+    lines.append(f"                                              uint16_t *__restrict__ out,")
+    lines.append(f"                                              const uint32_t bit,")
+    lines.append(f"                                              {I['reg']} anchor,")
+    lines.append(f"                                              {I['reg']} *__restrict__ sum) {{")
+    lines.append("  using namespace simdunaligned_u16;")
+    lines.append("  (void)out;")
+    lines.append("  switch (bit) {")
+    lines.append("  case 0:")
+    lines.append(f"    for (size_t i = 0; i < {n_outreg}; ++i) {{")
+    lines.append("      aggregate_sums_u16(anchor, sum);")
+    lines.append("    }")
+    lines.append("    (void)in;")
+    lines.append("    return;")
+    for b in range(1, MAX_BIT + 1):
+        lines.append(f"  case {b}:")
+        lines.append(f"    __SIMD_fastunpack{b}_16_corrected_uniform{name_suffix}(in, out, anchor, sum);")
+        lines.append("    return;")
+    lines.append("  default: break;")
+    lines.append("  }")
+    lines.append("}")
+    lines.append("")
+
+    # corrected dispatcher (exception path: per-OutReg corrections array)
+    lines.append(f"void usimdunpack_u16_corrected_n{W}(const {I['reg']} *__restrict__ in,")
+    lines.append(f"                                     uint16_t *__restrict__ out,")
+    lines.append(f"                                     const uint32_t bit,")
+    lines.append(f"                                     const {I['reg']} *__restrict__ corrections,")
+    lines.append(f"                                     {I['reg']} *__restrict__ sum) {{")
+    lines.append("  using namespace simdunaligned_u16;")
+    lines.append("  (void)out;")
+    lines.append("  switch (bit) {")
+    lines.append("  case 0:")
+    lines.append(f"    for (size_t i = 0; i < {n_outreg}; ++i) {{")
+    lines.append("      aggregate_sums_u16(corrections[i], sum);")
+    lines.append("    }")
+    lines.append("    (void)in;")
+    lines.append("    return;")
+    for b in range(1, MAX_BIT + 1):
+        lines.append(f"  case {b}:")
+        lines.append(f"    __SIMD_fastunpack{b}_16_corrected{name_suffix}(in, out, corrections, sum);")
+        lines.append("    return;")
+    lines.append("  default: break;")
+    lines.append("  }")
+    lines.append("}")
+    lines.append("")
+
+    lines.append("} // namespace FastPForLib")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Generate SIMD unaligned bit-packing for uint16')
@@ -556,7 +630,26 @@ def main():
         for bit in range(1, MAX_BIT + 1):
             out.append(gen_unpack_function(bit, I, mode='corrected_delta_carry'))
 
+    # Sub-block variants for W=32, 64, 128. Only AVX2 (the codecs using them are AVX2-only).
+    if I['width'] == 256:
+        for W in [32, 64, 128]:
+            name_suffix = f'_n{W}'
+            I_sub = dict(I, block=W)
+            for bit in range(MAX_BIT + 1):
+                out.append(gen_pack_function(bit, I_sub, name_suffix=name_suffix))
+            for bit in range(1, MAX_BIT + 1):
+                out.append(gen_unpack_function(bit, I_sub, mode='corrected_uniform',
+                                               name_suffix=name_suffix))
+            for bit in range(1, MAX_BIT + 1):
+                out.append(gen_unpack_function(bit, I_sub, mode='corrected',
+                                               name_suffix=name_suffix))
+
     out.append(gen_dispatchers(I))
+    if I['width'] == 256:
+        for W in [32, 64, 128]:
+            name_suffix = f'_n{W}'
+            I_sub = dict(I, block=W)
+            out.append(gen_sub_block_dispatchers(I_sub, W, name_suffix))
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     src_dir = os.path.join(script_dir, '..', 'src')

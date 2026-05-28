@@ -185,6 +185,149 @@ public:
         sum);
   }
 
+  // Sub-block pack/unpack wrappers dispatching to the nW primitives.
+  void packblock_nW(const uint16_t *source, uint32_t *out, const uint32_t bit,
+                    size_t W) {
+    auto *o = reinterpret_cast<__m256i *>(out);
+    switch (W) {
+    case 32:  usimdpack_u16_n32(source, o, bit); break;
+    case 64:  usimdpack_u16_n64(source, o, bit); break;
+    case 128: usimdpack_u16_n128(source, o, bit); break;
+    default:  usimdpack_u16(source, o, bit); break;
+    }
+  }
+
+  void unpackblock_corrected_uniform_nW(const uint32_t *source, uint16_t *out,
+                                         const uint32_t bit, __m256i anchor,
+                                         __m256i *sum, size_t W) {
+    (void)out;
+    const auto *s = reinterpret_cast<const __m256i *>(source);
+    switch (W) {
+    case 32:  usimdunpack_u16_corrected_uniform_n32(s, out, bit, anchor, sum); break;
+    case 64:  usimdunpack_u16_corrected_uniform_n64(s, out, bit, anchor, sum); break;
+    case 128: usimdunpack_u16_corrected_uniform_n128(s, out, bit, anchor, sum); break;
+    default:  usimdunpack_u16_corrected_uniform(s, out, bit, anchor, sum); break;
+    }
+  }
+
+  void unpackblock_corrected_nW(const uint32_t *source, uint16_t *out,
+                                  const uint32_t bit,
+                                  const __m256i *corrections, __m256i *sum,
+                                  size_t W) {
+    (void)out;
+    const auto *s = reinterpret_cast<const __m256i *>(source);
+    switch (W) {
+    case 32:  usimdunpack_u16_corrected_n32(s, out, bit, corrections, sum); break;
+    case 64:  usimdunpack_u16_corrected_n64(s, out, bit, corrections, sum); break;
+    case 128: usimdunpack_u16_corrected_n128(s, out, bit, corrections, sum); break;
+    default:  usimdunpack_u16_corrected(s, out, bit, corrections, sum); break;
+    }
+  }
+
+  // W-parametrized block compressor. W must be a multiple of 16 and <= BlockSize.
+  uint32_t compressblockPFOR_nW(const DATATYPE *__restrict__ in,
+                                 uint32_t *__restrict__ outputbegin,
+                                 const uint32_t b,
+                                 DATATYPE *__restrict__ &exceptions,
+                                 size_t W) {
+    if (b == 16) {
+      const uint16_t *src = in;
+      for (size_t k = 0; k < W / 2; ++k)
+        outputbegin[k] = static_cast<uint32_t>(src[2 * k]) |
+                         (static_cast<uint32_t>(src[2 * k + 1]) << 16);
+      return static_cast<uint32_t>(W);
+    }
+    size_t exceptcounter = 0;
+    const uint32_t maxgap = 1U << b;
+    for (uint32_t k = 0; k < W; ++k) {
+      miss[exceptcounter] = k;
+      exceptcounter += (in[k] >= maxgap);
+    }
+    if (exceptcounter == 0) {
+      packblock_nW(in, outputbegin, b, W);
+      return static_cast<uint32_t>(W);
+    }
+    codedcopy.assign(in, in + W);
+    uint32_t firstexcept = miss[0];
+    uint32_t prev = 0;
+    *(exceptions++) = codedcopy[firstexcept];
+    prev = firstexcept;
+    if (maxgap < W) {
+      for (uint32_t i = 1; i < exceptcounter; ++i) {
+        uint32_t cur = miss[i];
+        while (cur > maxgap + prev) {
+          uint32_t compulcur = prev + maxgap;
+          *(exceptions++) = codedcopy[compulcur];
+          codedcopy[prev] = static_cast<uint16_t>(maxgap - 1);
+          prev = compulcur;
+        }
+        *(exceptions++) = codedcopy[cur];
+        codedcopy[prev] = static_cast<uint16_t>(cur - prev - 1);
+        prev = cur;
+      }
+    } else {
+      for (uint32_t i = 1; i < exceptcounter; ++i) {
+        uint32_t cur = miss[i];
+        *(exceptions++) = codedcopy[cur];
+        codedcopy[prev] = static_cast<uint16_t>(cur - prev - 1);
+        prev = cur;
+      }
+    }
+    codedcopy[prev] &= static_cast<uint16_t>((1U << b) - 1);
+    packblock_nW(&codedcopy[0], outputbegin, b, W);
+    return firstexcept;
+  }
+
+  // W-parametrized FoR-corrected block decompressor.
+  void uncompressblockPFOR_u16_corrected_for_nW(
+      const uint32_t *__restrict__ inputbegin,
+      uint16_t *__restrict__ outputbegin, const uint32_t b,
+      const uint32_t *__restrict__ except_base, size_t start_except_idx,
+      size_t end_except_idx, size_t next_exception,
+      uint16_t anchor, __m256i *sum, size_t W) {
+
+    const __m256i anchor_bcast = _mm256_set1_epi16(static_cast<short>(anchor));
+
+    if (b == 16) {
+      const uint16_t *raw = reinterpret_cast<const uint16_t *>(inputbegin);
+      const __m256i zero = _mm256_setzero_si256();
+      for (size_t i = 0; i < W; i += 16) {
+        __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(raw + i));
+        v = _mm256_add_epi16(v, anchor_bcast);
+        *sum = _mm256_add_epi32(*sum, _mm256_unpacklo_epi16(v, zero));
+        *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(v, zero));
+      }
+      return;
+    }
+
+    if (start_except_idx == end_except_idx) {
+      unpackblock_corrected_uniform_nW(inputbegin, outputbegin, b,
+                                       anchor_bcast, sum, W);
+      return;
+    }
+
+    // Exception path: stack-allocate W-element corrections array.
+    const size_t n_outreg = W / PACKSIZE;
+    alignas(32) uint16_t corrections_data[BlockSize];  // BlockSize upper-bounds W
+    {
+      __m256i *cd = reinterpret_cast<__m256i *>(corrections_data);
+      for (size_t r = 0; r < n_outreg; ++r)
+        _mm256_store_si256(cd + r, anchor_bcast);
+    }
+    const uint16_t *packed_data = reinterpret_cast<const uint16_t *>(inputbegin);
+    for (size_t idx = start_except_idx; idx != end_except_idx; ++idx) {
+      const uint32_t gap =
+          read_gap_simd_layout_u16(packed_data, b, next_exception);
+      const uint16_t exc_val = static_cast<uint16_t>(except_base[idx]);
+      corrections_data[next_exception] +=
+          static_cast<uint16_t>(exc_val - static_cast<uint16_t>(gap));
+      next_exception = next_exception + static_cast<size_t>(gap) + 1;
+    }
+    unpackblock_corrected_nW(
+        inputbegin, outputbegin, b,
+        reinterpret_cast<const __m256i *>(corrections_data), sum, W);
+  }
+
   void encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
                    size_t &nvalue) {
     total_exceptions_encoded_ = 0;
@@ -509,21 +652,23 @@ public:
   // makes adaptive_b ~1.4× slower than global_b despite identical compression.
 
   void encodeArrayFlat(const uint16_t *in, const size_t len, uint32_t *out,
-                       size_t &nvalue) {
-    assert(len % BlockSize == 0);
-    const size_t n_blocks = len / BlockSize;
+                       size_t &nvalue, size_t window_size = BlockSize) {
+    assert(len % window_size == 0);
+    const size_t n_blocks = len / window_size;
     const uint32_t *const initout = out;
 
     // Step 1: compute per-block bs[] (one determineBestBase call per block)
-    uint8_t bs_buf[256];
+    // bs_buf sized for smallest window (W=32 with 65536 elements = 2048 blocks).
+    uint8_t bs_buf[2048];
     for (size_t k = 0; k < n_blocks; ++k)
       bs_buf[k] = static_cast<uint8_t>(
-          determineBestBase(in + k * BlockSize, BlockSize, exceptionPenalty_));
+          determineBestBase(in + k * window_size, window_size, exceptionPenalty_));
 
     // Step 2: total payload words — needed to locate exception area upfront
+    // Payload for W-element block at b bits: ceil(W*b/256) * 8 uint32 words.
     size_t total_payload_words = 0;
     for (size_t k = 0; k < n_blocks; ++k)
-      total_payload_words += (BlockSize * static_cast<size_t>(bs_buf[k])) / 32;
+      total_payload_words += ((window_size * static_cast<size_t>(bs_buf[k]) + 255) / 256) * 8;
 
     // Write n_blocks
     *out++ = static_cast<uint32_t>(n_blocks);
@@ -544,15 +689,15 @@ public:
     size_t cumulative_exc = 0;
 
     const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
-    alignas(32) uint16_t per_block_exc[BlockSize];
+    alignas(32) uint16_t per_block_exc[BlockSize];  // BlockSize upper-bounds W
 
     for (size_t k = 0; k < n_blocks; ++k) {
       uint16_t *exc_ptr = per_block_exc;
       const uint32_t firstexcept =
-          compressblockPFOR(in + k * BlockSize, out, bs_buf[k], exc_ptr);
+          compressblockPFOR_nW(in + k * window_size, out, bs_buf[k], exc_ptr, window_size);
       const size_t block_exc =
           static_cast<size_t>(exc_ptr - per_block_exc);
-      out += (BlockSize * static_cast<size_t>(bs_buf[k])) / 32;
+      out += ((window_size * static_cast<size_t>(bs_buf[k]) + 255) / 256) * 8;
       cumulative_exc += block_exc;
       headers_ptr[k] = (firstexcept & firstexceptmask) |
                        (static_cast<uint32_t>(cumulative_exc) << blocksizeinbits);
@@ -621,7 +766,8 @@ public:
   const uint32_t *decodeArrayFlatCorrectedFor(const uint32_t *in,
                                                const size_t /*len*/,
                                                uint16_t *out, size_t &nvalue,
-                                               const uint16_t *anchors) {
+                                               const uint16_t *anchors,
+                                               size_t window_size = BlockSize) {
     uint16_t *initout = out;
     __m256i sum = _mm256_setzero_si256();
 
@@ -635,7 +781,7 @@ public:
 
     size_t total_payload_words = 0;
     for (size_t k = 0; k < n_blocks; ++k)
-      total_payload_words += (BlockSize * static_cast<size_t>(bs[k])) / 32;
+      total_payload_words += ((window_size * static_cast<size_t>(bs[k]) + 255) / 256) * 8;
     const uint32_t *except_base = payload_base + total_payload_words;
 
     const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
@@ -648,16 +794,16 @@ public:
       const uint32_t firstexcept = header & firstexceptmask;
       const uint32_t exceptindex = header >> blocksizeinbits;
 
-      uncompressblockPFOR_u16_corrected_for(payload_ptr, out, b,
-                                             except_base, except_offset,
-                                             exceptindex, firstexcept,
-                                             anchors[k], &sum);
+      uncompressblockPFOR_u16_corrected_for_nW(payload_ptr, out, b,
+                                                except_base, except_offset,
+                                                exceptindex, firstexcept,
+                                                anchors[k], &sum, window_size);
       except_offset = exceptindex;
-      payload_ptr  += (BlockSize * b) / 32;
-      out          += BlockSize;
+      payload_ptr  += ((window_size * b + 255) / 256) * 8;
+      out          += window_size;
     }
 
-    nvalue = n_blocks * BlockSize;
+    nvalue = n_blocks * window_size;
 
     __m128i lo = _mm256_castsi256_si128(sum);
     __m128i hi = _mm256_extracti128_si256(sum, 1);
