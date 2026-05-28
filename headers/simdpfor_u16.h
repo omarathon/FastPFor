@@ -498,6 +498,179 @@ public:
     return in;
   }
 
+  // ── Flat-format encode/decode ────────────────────────────────────────────────
+  //
+  // Format: [n_blocks:u32][bs:u8×n_blocks padded to 4B][headers:u32×n_blocks]
+  //         [payloads:sum(bs[k]×BlockSize/32) u32 words][exceptions:u32 per val]
+  //
+  // All per-block b values are in a flat sequential array; the decode loop reads
+  // bs[k] at a known address (hardware-prefetchable sequential array) rather than
+  // from a data-dependent stream position. Breaks the per-block pointer chain that
+  // makes adaptive_b ~1.4× slower than global_b despite identical compression.
+
+  void encodeArrayFlat(const uint16_t *in, const size_t len, uint32_t *out,
+                       size_t &nvalue) {
+    assert(len % BlockSize == 0);
+    const size_t n_blocks = len / BlockSize;
+    const uint32_t *const initout = out;
+
+    // Step 1: compute per-block bs[] (one determineBestBase call per block)
+    uint8_t bs_buf[256];
+    for (size_t k = 0; k < n_blocks; ++k)
+      bs_buf[k] = static_cast<uint8_t>(
+          determineBestBase(in + k * BlockSize, BlockSize, exceptionPenalty_));
+
+    // Step 2: total payload words — needed to locate exception area upfront
+    size_t total_payload_words = 0;
+    for (size_t k = 0; k < n_blocks; ++k)
+      total_payload_words += (BlockSize * static_cast<size_t>(bs_buf[k])) / 32;
+
+    // Write n_blocks
+    *out++ = static_cast<uint32_t>(n_blocks);
+
+    // Write bs[] packed as u8 in u32 words (zero-pad last word)
+    const size_t bs_words = (n_blocks + 3) / 4;
+    auto *bs_raw = reinterpret_cast<uint8_t *>(out);
+    for (size_t j = 0; j < bs_words * 4; ++j)
+      bs_raw[j] = (j < n_blocks) ? bs_buf[j] : 0u;
+    out += bs_words;
+
+    // Reserve header words — filled after payload encoding
+    uint32_t *headers_ptr = out;
+    out += n_blocks;
+
+    // Exception area starts at a known offset past all payloads
+    uint32_t *except_out = out + total_payload_words;
+    size_t cumulative_exc = 0;
+
+    const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
+    alignas(32) uint16_t per_block_exc[BlockSize];
+
+    for (size_t k = 0; k < n_blocks; ++k) {
+      uint16_t *exc_ptr = per_block_exc;
+      const uint32_t firstexcept =
+          compressblockPFOR(in + k * BlockSize, out, bs_buf[k], exc_ptr);
+      const size_t block_exc =
+          static_cast<size_t>(exc_ptr - per_block_exc);
+      out += (BlockSize * static_cast<size_t>(bs_buf[k])) / 32;
+      cumulative_exc += block_exc;
+      headers_ptr[k] = (firstexcept & firstexceptmask) |
+                       (static_cast<uint32_t>(cumulative_exc) << blocksizeinbits);
+      for (size_t e = 0; e < block_exc; ++e)
+        *except_out++ = static_cast<uint32_t>(per_block_exc[e]);
+    }
+
+    total_exceptions_encoded_ += cumulative_exc;
+    total_blocks_encoded_     += n_blocks;
+    nvalue = static_cast<size_t>(except_out - initout);
+  }
+
+  // Flat-format decode for corrected (non-FoR) path.
+  const uint32_t *decodeArrayFlatCorrected(const uint32_t *in,
+                                            const size_t /*len*/,
+                                            uint16_t *out, size_t &nvalue) {
+    uint16_t *initout = out;
+    __m256i sum = _mm256_setzero_si256();
+
+    const size_t n_blocks = *in++;
+    const size_t bs_words = (n_blocks + 3) / 4;
+    const uint8_t *bs = reinterpret_cast<const uint8_t *>(in);
+    in += bs_words;
+    const uint32_t *headers = in;
+    in += n_blocks;
+    const uint32_t *payload_base = in;
+
+    size_t total_payload_words = 0;
+    for (size_t k = 0; k < n_blocks; ++k)
+      total_payload_words += (BlockSize * static_cast<size_t>(bs[k])) / 32;
+    const uint32_t *except_base = payload_base + total_payload_words;
+
+    const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
+    const uint32_t *payload_ptr = payload_base;
+    size_t except_offset = 0;
+
+    for (size_t k = 0; k < n_blocks; ++k) {
+      const uint32_t b        = bs[k];   // flat array — no data-dep load chain
+      const uint32_t header   = headers[k];
+      const uint32_t firstexcept = header & firstexceptmask;
+      const uint32_t exceptindex = header >> blocksizeinbits;
+
+      uncompressblockPFOR_u16_corrected(payload_ptr, out, b,
+                                         except_base, except_offset,
+                                         exceptindex, firstexcept, &sum);
+      except_offset = exceptindex;
+      payload_ptr  += (BlockSize * b) / 32;
+      out          += BlockSize;
+    }
+
+    nvalue = n_blocks * BlockSize;
+
+    __m128i lo = _mm256_castsi256_si128(sum);
+    __m128i hi = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
+    const auto out_sum = static_cast<uint32_t>(_mm_cvtsi128_si32(s));
+    initout[nvalue]     = static_cast<uint16_t>(out_sum & 0xFFFF);
+    initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
+
+    return except_base + except_offset;
+  }
+
+  // Flat-format decode for FoR-corrected path. anchors[k] is the per-block anchor.
+  const uint32_t *decodeArrayFlatCorrectedFor(const uint32_t *in,
+                                               const size_t /*len*/,
+                                               uint16_t *out, size_t &nvalue,
+                                               const uint16_t *anchors) {
+    uint16_t *initout = out;
+    __m256i sum = _mm256_setzero_si256();
+
+    const size_t n_blocks = *in++;
+    const size_t bs_words = (n_blocks + 3) / 4;
+    const uint8_t *bs = reinterpret_cast<const uint8_t *>(in);
+    in += bs_words;
+    const uint32_t *headers = in;
+    in += n_blocks;
+    const uint32_t *payload_base = in;
+
+    size_t total_payload_words = 0;
+    for (size_t k = 0; k < n_blocks; ++k)
+      total_payload_words += (BlockSize * static_cast<size_t>(bs[k])) / 32;
+    const uint32_t *except_base = payload_base + total_payload_words;
+
+    const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
+    const uint32_t *payload_ptr = payload_base;
+    size_t except_offset = 0;
+
+    for (size_t k = 0; k < n_blocks; ++k) {
+      const uint32_t b        = bs[k];   // flat array — no data-dep load chain
+      const uint32_t header   = headers[k];
+      const uint32_t firstexcept = header & firstexceptmask;
+      const uint32_t exceptindex = header >> blocksizeinbits;
+
+      uncompressblockPFOR_u16_corrected_for(payload_ptr, out, b,
+                                             except_base, except_offset,
+                                             exceptindex, firstexcept,
+                                             anchors[k], &sum);
+      except_offset = exceptindex;
+      payload_ptr  += (BlockSize * b) / 32;
+      out          += BlockSize;
+    }
+
+    nvalue = n_blocks * BlockSize;
+
+    __m128i lo = _mm256_castsi256_si128(sum);
+    __m128i hi = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
+    const auto out_sum = static_cast<uint32_t>(_mm_cvtsi128_si32(s));
+    initout[nvalue]     = static_cast<uint16_t>(out_sum & 0xFFFF);
+    initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
+
+    return except_base + except_offset;
+  }
+
   void __encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
                      size_t &nvalue) {
     checkifdivisibleby(len, BlockSize);

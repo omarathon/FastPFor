@@ -203,6 +203,28 @@ public:
     return in2;
   }
 
+  // Flat-format encode/decode wrappers — route adaptive_b codecs through the
+  // dependency-chain-free path. len must be a multiple of SIMDPForU16::BlockSize
+  // (no VB tail). See SIMDPForU16::encodeArrayFlat for format details.
+
+  void encodeArrayFlat(const uint16_t *in, const size_t len, uint32_t *out,
+                       size_t &nvalue) {
+    codec1.encodeArrayFlat(in, len, out, nvalue);
+  }
+
+  const uint32_t *decodeArrayFlatCorrected(const uint32_t *in,
+                                            const size_t length,
+                                            uint16_t *out, size_t &nvalue) {
+    return codec1.decodeArrayFlatCorrected(in, length, out, nvalue);
+  }
+
+  const uint32_t *decodeArrayFlatCorrectedFor(const uint32_t *in,
+                                               const size_t length,
+                                               uint16_t *out, size_t &nvalue,
+                                               const uint16_t *anchors) {
+    return codec1.decodeArrayFlatCorrectedFor(in, length, out, nvalue, anchors);
+  }
+
   std::string name() const { return codec1.name() + "+" + codec2.name(); }
 };
 
