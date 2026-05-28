@@ -31,11 +31,14 @@ public:
   std::vector<uint16_t> codedcopy;
   std::vector<uint32_t> miss;
   size_t maxChunkSize_;
+  double exceptionPenalty_;
   size_t total_exceptions_encoded_ = 0;
   size_t total_blocks_encoded_     = 0;
 
-  SIMDPForU16(size_t maxChunkSize = (1U << (32 - blocksizeinbits - 1)))
-      : codedcopy(BlockSize), miss(BlockSize), maxChunkSize_(maxChunkSize) {}
+  SIMDPForU16(size_t maxChunkSize = (1U << (32 - blocksizeinbits - 1)),
+              double exceptionPenalty = 16.0)
+      : codedcopy(BlockSize), miss(BlockSize),
+        maxChunkSize_(maxChunkSize), exceptionPenalty_(exceptionPenalty) {}
 
   double MeanExceptionsPerBlock() const {
     return total_blocks_encoded_ > 0
@@ -43,7 +46,8 @@ public:
         : 0.0;
   }
 
-  static uint32_t determineBestBase(const DATATYPE *in, size_t size) {
+  static uint32_t determineBestBase(const DATATYPE *in, size_t size,
+                                    double penalty = 16.0) {
     if (size == 0)
       return 0;
     const size_t defaultsamplesize = 64 * 1024;
@@ -71,7 +75,7 @@ public:
         if (altErate > Erate)
           Erate = altErate;
       }
-      const double thiscost = b + Erate * 16;
+      const double thiscost = b + Erate * penalty;
       if (thiscost <= bestcost) {
         bestcost = thiscost;
         bestb = b;
@@ -501,7 +505,7 @@ public:
     std::vector<DATATYPE> exceptions;
     exceptions.resize(len);
     DATATYPE *__restrict__ i = &exceptions[0];
-    const uint32_t b = determineBestBase(in, len);
+    const uint32_t b = determineBestBase(in, len, exceptionPenalty_);
     *out++ = static_cast<uint32_t>(len);
     *out++ = b;
     for (size_t k = 0; k < len / BlockSize; ++k) {

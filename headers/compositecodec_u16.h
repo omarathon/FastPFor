@@ -20,6 +20,7 @@ public:
 
   CompositeCodecU16() = default;
   explicit CompositeCodecU16(size_t chunkSize) : codec1(chunkSize) {}
+  CompositeCodecU16(size_t chunkSize, double penalty) : codec1(chunkSize, penalty) {}
 
   void encodeArray(const uint16_t *in, const size_t length, uint32_t *out,
                    size_t &nvalue) {
