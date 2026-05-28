@@ -31,9 +31,17 @@ public:
   std::vector<uint16_t> codedcopy;
   std::vector<uint32_t> miss;
   size_t maxChunkSize_;
+  size_t total_exceptions_encoded_ = 0;
+  size_t total_blocks_encoded_     = 0;
 
   SIMDPForU16(size_t maxChunkSize = (1U << (32 - blocksizeinbits - 1)))
       : codedcopy(BlockSize), miss(BlockSize), maxChunkSize_(maxChunkSize) {}
+
+  double MeanExceptionsPerBlock() const {
+    return total_blocks_encoded_ > 0
+        ? static_cast<double>(total_exceptions_encoded_) / total_blocks_encoded_
+        : 0.0;
+  }
 
   static uint32_t determineBestBase(const DATATYPE *in, size_t size) {
     if (size == 0)
@@ -175,6 +183,8 @@ public:
 
   void encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
                    size_t &nvalue) {
+    total_exceptions_encoded_ = 0;
+    total_blocks_encoded_     = 0;
     *out++ = static_cast<uint32_t>(len);
     const size_t maxsize = maxChunkSize_;
     size_t totalnvalue(1);
@@ -510,6 +520,8 @@ public:
     const size_t howmanyexcept = i - &exceptions[0];
     for (uint32_t t = 0; t < howmanyexcept; ++t)
       *out++ = static_cast<uint32_t>(exceptions[t]);
+    total_exceptions_encoded_ += howmanyexcept;
+    total_blocks_encoded_     += len / BlockSize;
     nvalue = out - initout;
   }
 
@@ -688,9 +700,7 @@ public:
     for (size_t idx = start_except_idx; idx != end_except_idx;) {
       const auto gap = read_gap_simd_layout_u16(packed_data, b, next_exception);
       next_exception = next_exception + static_cast<size_t>(gap) + 1;
-
       uint16_t exc_val = static_cast<uint16_t>(except_base[idx]);
-
       *delta_sum += (static_cast<int32_t>(exc_val) - static_cast<int32_t>(gap));
       idx++;
     }
@@ -817,24 +827,18 @@ public:
     if (b >= 16)
       return input[index];
 
-    const size_t lane = index & 15;    // 0..15 (which 16-bit lane in __m256i)
-    const size_t elem = index >> 4;    // index within that lane stream
-
+    const size_t lane = index & 15;
+    const size_t elem = index >> 4;
     const uint32_t bitpos = static_cast<uint32_t>(elem) * b;
-    const uint32_t word = bitpos >> 4;  // 16-bit word index within lane stream
+    const uint32_t word = bitpos >> 4;
     const uint32_t shift = bitpos & 15;
-
     const size_t w0 = size_t(word) * 16 + lane;
-
     uint32_t val = uint32_t(input[w0]) >> shift;
-
     if (shift + b > 16) {
-      const size_t w1 = w0 + 16; // next word in SAME lane (next __m256i)
+      const size_t w1 = w0 + 16;
       val |= uint32_t(input[w1]) << (16 - shift);
     }
-
-    const uint32_t mask = (1u << b) - 1u;
-    return val & mask;
+    return val & ((1u << b) - 1u);
   }
 
   std::string name() const { return "SIMDPFor"; }
