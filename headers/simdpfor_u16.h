@@ -30,8 +30,10 @@ public:
 
   std::vector<uint16_t> codedcopy;
   std::vector<uint32_t> miss;
+  size_t maxChunkSize_;
 
-  SIMDPForU16() : codedcopy(BlockSize), miss(BlockSize) {}
+  SIMDPForU16(size_t maxChunkSize = (1U << (32 - blocksizeinbits - 1)))
+      : codedcopy(BlockSize), miss(BlockSize), maxChunkSize_(maxChunkSize) {}
 
   static uint32_t determineBestBase(const DATATYPE *in, size_t size) {
     if (size == 0)
@@ -174,10 +176,10 @@ public:
   void encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
                    size_t &nvalue) {
     *out++ = static_cast<uint32_t>(len);
-    const uint32_t maxsize = (1U << (32 - blocksizeinbits - 1));
+    const size_t maxsize = maxChunkSize_;
     size_t totalnvalue(1);
     for (size_t j = 0; j < (len + maxsize - 1U) / maxsize; ++j) {
-      size_t i = j << (32 - blocksizeinbits - 1);
+      size_t i = j * maxsize;
       size_t l = maxsize;
       if (i + maxsize > len) {
         l = len - i;

@@ -18,6 +18,9 @@ public:
   SIMDPForU16 codec1;
   VariableByteU16 codec2;
 
+  CompositeCodecU16() = default;
+  explicit CompositeCodecU16(size_t chunkSize) : codec1(chunkSize) {}
+
   void encodeArray(const uint16_t *in, const size_t length, uint32_t *out,
                    size_t &nvalue) {
     if (nvalue == 0)
