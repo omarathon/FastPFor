@@ -46,8 +46,14 @@ public:
         : 0.0;
   }
 
+  // `blockSize` is the size of the PFor block the exception gap-chain runs over
+  // (compulsory exceptions are inserted every 2^b positions within a block).
+  // Non-flat path: BlockSize (256). Flat path: the sub-block window_size.
+  // NOTE: upstream 32-bit simdpfor.h hardcodes 128 here = its BlockSize; the
+  // u16 port must use the u16 block size, hence this parameter.
   static uint32_t determineBestBase(const DATATYPE *in, size_t size,
-                                    double penalty = 16.0) {
+                                    double penalty = 16.0,
+                                    size_t blockSize = BlockSize) {
     if (size == 0)
       return 0;
     const size_t defaultsamplesize = 64 * 1024;
@@ -71,7 +77,8 @@ public:
       Erate = static_cast<double>(numberofexceptions) /
               static_cast<double>(samplesize);
       if (numberofexceptions > 0) {
-        double altErate = (Erate * 128 - 1) / (Erate * (1U << b));
+        double altErate = (Erate * static_cast<double>(blockSize) - 1) /
+                          (Erate * (1U << b));
         if (altErate > Erate)
           Erate = altErate;
       }
@@ -662,7 +669,8 @@ public:
     uint8_t bs_buf[2048];
     for (size_t k = 0; k < n_blocks; ++k)
       bs_buf[k] = static_cast<uint8_t>(
-          determineBestBase(in + k * window_size, window_size, exceptionPenalty_));
+          determineBestBase(in + k * window_size, window_size, exceptionPenalty_,
+                            window_size));
 
     // Step 2: total payload words — needed to locate exception area upfront
     // Payload for W-element block at b bits: ceil(W*b/256) * 8 uint32 words.
