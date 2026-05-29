@@ -215,8 +215,9 @@ public:
 
   const uint32_t *decodeArrayFlatCorrected(const uint32_t *in,
                                             const size_t length,
-                                            uint16_t *out, size_t &nvalue) {
-    return codec1.decodeArrayFlatCorrected(in, length, out, nvalue);
+                                            uint16_t *out, size_t &nvalue,
+                                            size_t window_size = SIMDPForU16::BlockSize) {
+    return codec1.decodeArrayFlatCorrected(in, length, out, nvalue, window_size);
   }
 
   const uint32_t *decodeArrayFlatCorrectedFor(const uint32_t *in,

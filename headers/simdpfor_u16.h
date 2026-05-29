@@ -719,10 +719,12 @@ public:
     nvalue = static_cast<size_t>(except_area - initout) + (cumulative_exc + 1) / 2;
   }
 
-  // Flat-format decode for corrected (non-FoR) path.
+  // Flat-format decode for corrected (non-FoR) path. window_size must match
+  // the value passed to encodeArrayFlat.
   const uint32_t *decodeArrayFlatCorrected(const uint32_t *in,
                                             const size_t /*len*/,
-                                            uint16_t *out, size_t &nvalue) {
+                                            uint16_t *out, size_t &nvalue,
+                                            size_t window_size = BlockSize) {
     uint16_t *initout = out;
     __m256i sum = _mm256_setzero_si256();
 
@@ -736,7 +738,7 @@ public:
 
     size_t total_payload_words = 0;
     for (size_t k = 0; k < n_blocks; ++k)
-      total_payload_words += (BlockSize * static_cast<size_t>(bs[k])) / 32;
+      total_payload_words += ((window_size * static_cast<size_t>(bs[k]) + 255) / 256) * 8;
     const uint32_t *except_base = payload_base + total_payload_words;
 
     const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
@@ -752,13 +754,13 @@ public:
       uncompressblockPFOR_u16_corrected_nW(payload_ptr, out, b,
                                             except_base, except_offset,
                                             exceptindex, firstexcept, &sum,
-                                            BlockSize);
+                                            window_size);
       except_offset = exceptindex;
-      payload_ptr  += (BlockSize * b) / 32;
-      out          += BlockSize;
+      payload_ptr  += ((window_size * b + 255) / 256) * 8;
+      out          += window_size;
     }
 
-    nvalue = n_blocks * BlockSize;
+    nvalue = n_blocks * window_size;
 
     __m128i lo = _mm256_castsi256_si128(sum);
     __m128i hi = _mm256_extracti128_si256(sum, 1);
