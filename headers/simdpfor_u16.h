@@ -710,10 +710,12 @@ public:
     nvalue = static_cast<size_t>(except_out - initout);
   }
 
-  // Flat-format decode for corrected (non-FoR) path.
+  // Flat-format decode for corrected (non-FoR) path. window_size selects the
+  // sub-block width (must match the value passed to encodeArrayFlat).
   const uint32_t *decodeArrayFlatCorrected(const uint32_t *in,
                                             const size_t /*len*/,
-                                            uint16_t *out, size_t &nvalue) {
+                                            uint16_t *out, size_t &nvalue,
+                                            size_t window_size = BlockSize) {
     uint16_t *initout = out;
     __m256i sum = _mm256_setzero_si256();
 
@@ -725,9 +727,11 @@ public:
     in += n_blocks;
     const uint32_t *payload_base = in;
 
+    // Payload per block padded up to a whole 256-bit (8-u32) SIMD unit, matching
+    // encodeArrayFlat's sizing.
     size_t total_payload_words = 0;
     for (size_t k = 0; k < n_blocks; ++k)
-      total_payload_words += (BlockSize * static_cast<size_t>(bs[k])) / 32;
+      total_payload_words += ((window_size * static_cast<size_t>(bs[k]) + 255) / 256) * 8;
     const uint32_t *except_base = payload_base + total_payload_words;
 
     const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
@@ -740,15 +744,16 @@ public:
       const uint32_t firstexcept = header & firstexceptmask;
       const uint32_t exceptindex = header >> blocksizeinbits;
 
-      uncompressblockPFOR_u16_corrected(payload_ptr, out, b,
-                                         except_base, except_offset,
-                                         exceptindex, firstexcept, &sum);
+      uncompressblockPFOR_u16_corrected_nW(payload_ptr, out, b,
+                                            except_base, except_offset,
+                                            exceptindex, firstexcept, &sum,
+                                            window_size);
       except_offset = exceptindex;
-      payload_ptr  += (BlockSize * b) / 32;
-      out          += BlockSize;
+      payload_ptr  += ((window_size * b + 255) / 256) * 8;
+      out          += window_size;
     }
 
-    nvalue = n_blocks * BlockSize;
+    nvalue = n_blocks * window_size;
 
     __m128i lo = _mm256_castsi256_si128(sum);
     __m128i hi = _mm256_extracti128_si256(sum, 1);
@@ -759,7 +764,8 @@ public:
     initout[nvalue]     = static_cast<uint16_t>(out_sum & 0xFFFF);
     initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
 
-    return except_base + except_offset;
+    // Exceptions are packed 2 uint16 per uint32 word.
+    return except_base + (except_offset + 1) / 2;
   }
 
   // Flat-format decode for FoR-corrected path. anchors[k] is the per-block anchor.
@@ -1083,6 +1089,55 @@ public:
     unpackblock_corrected(
         inputbegin, outputbegin, b,
         reinterpret_cast<const __m256i *>(corrections_data), sum);
+  }
+
+  // W-parametrized variant of uncompressblockPFOR_u16_corrected for the flat
+  // (adaptive_b) decode path. Two differences from the 256-only helper above:
+  //   1. Operates on a W-element sub-block (W ∈ {32,64,128,256}).
+  //   2. Reads exceptions from a uint16-packed stream (2 per uint32 word) — the
+  //      flat encoder packs them this way; the non-flat global_b path does not,
+  //      so that path keeps using the helper above.
+  void uncompressblockPFOR_u16_corrected_nW(
+      const uint32_t *__restrict__ inputbegin,
+      uint16_t *__restrict__ outputbegin, const uint32_t b,
+      const uint32_t *__restrict__ except_base, size_t start_except_idx,
+      size_t end_except_idx, size_t next_exception, __m256i *sum, size_t W) {
+    if (b == 16) {
+      const uint16_t *raw = reinterpret_cast<const uint16_t *>(inputbegin);
+      const __m256i zero = _mm256_setzero_si256();
+      for (size_t i = 0; i < W; i += 16) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i *>(raw + i));
+        *sum = _mm256_add_epi32(*sum, _mm256_unpacklo_epi16(v, zero));
+        *sum = _mm256_add_epi32(*sum, _mm256_unpackhi_epi16(v, zero));
+      }
+      return;
+    }
+
+    if (start_except_idx == end_except_idx) {
+      // Exception-free block: plain fused unpack. The non-FoR path has no
+      // anchor, so use the uniform helper with a zero anchor (adds 0 per lane).
+      unpackblock_corrected_uniform_nW(inputbegin, outputbegin, b,
+                                       _mm256_setzero_si256(), sum, W);
+      return;
+    }
+
+    alignas(32) uint16_t corrections_data[BlockSize] = {0};  // BlockSize ⊇ W
+    const uint16_t *exc16 = reinterpret_cast<const uint16_t *>(except_base);
+    const uint16_t *packed_data =
+        reinterpret_cast<const uint16_t *>(inputbegin);
+    for (size_t idx = start_except_idx; idx != end_except_idx; ++idx) {
+      const uint32_t gap =
+          read_gap_simd_layout_u16(packed_data, b, next_exception);
+      const uint16_t exc_val = exc16[idx];
+      corrections_data[next_exception] =
+          static_cast<uint16_t>(exc_val - static_cast<uint16_t>(gap));
+      next_exception = next_exception + static_cast<size_t>(gap) + 1;
+    }
+
+    unpackblock_corrected_nW(
+        inputbegin, outputbegin, b,
+        reinterpret_cast<const __m256i *>(corrections_data), sum, W);
   }
 
   // Per-block helper for delta-local: walks the exception gap chain, writes
