@@ -46,10 +46,10 @@ public:
   using IntegerCODEC::decodeArray;
 
   enum {
-    BlockSizeInUnitsOfPackSize = 4,
+    BlockSizeInUnitsOfPackSize = 8,
     PACKSIZE = 32,
     BlockSize = BlockSizeInUnitsOfPackSize * PACKSIZE,
-    blocksizeinbits = 7 // constexprbits(BlockSize)
+    blocksizeinbits = 8 // constexprbits(BlockSize)
   };
   // these are reusable buffers
   std::vector<uint32_t> codedcopy;
@@ -164,11 +164,11 @@ public:
   }
 
   void packblock(const uint32_t *source, uint32_t *out, const uint32_t bit) {
-    usimdpack(source, reinterpret_cast<__m128i *>(out), bit);
+    usimdpack(source, reinterpret_cast<__m256i *>(out), bit);
   }
 
-  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m128i* sum) {
-    usimdunpack_new(reinterpret_cast<const __m128i *>(source), out, bit, sum);
+  void unpackblock(const uint32_t *source, uint32_t *out, const uint32_t bit, __m256i* sum) {
+    usimdunpack_new(reinterpret_cast<const __m256i *>(source), out, bit, sum);
   }
 
   void encodeArray(const uint32_t *in, const size_t len, uint32_t *out,
@@ -208,7 +208,7 @@ public:
 #endif
     const uint32_t *const finalin = in + len;
     size_t totalnvalue(0);
-    __m128i sum = _mm_setzero_si128();
+    __m256i sum = _mm256_setzero_si256();
     int32_t delta_sum = 0;
     uint32_t* initout = out;
     while (totalnvalue < nvalue) {
@@ -228,7 +228,10 @@ public:
     assert(in <= finalin);
     nvalue = totalnvalue;
 
-    __m128i s = sum;
+    // 256-bit horizontal sum: fold 256->128, then 128->scalar
+    __m128i lo = _mm256_castsi256_si128(sum);
+    __m128i hi = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo, hi);
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1,0,3,2)));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2,3,0,1)));
     const auto out_sum = (uint32_t)(_mm_cvtsi128_si32(s) + delta_sum /* correct exceptions */);
@@ -270,7 +273,7 @@ public:
 #else
   const uint32_t *__decodeArray(const uint32_t *in, const size_t,
 #endif
-                                uint32_t *out, size_t &nvalue, __m128i* sum, int32_t* delta_sum) {
+                                uint32_t *out, size_t &nvalue, __m256i* sum, int32_t* delta_sum) {
 #ifndef NDEBUG
     const uint32_t *const initin(in);
 #endif
@@ -306,19 +309,19 @@ public:
       if (b == 0) return 0;
       if (b >= 32) return input[index];
 
-      const size_t lane = index & 3;     // 0..3 (which 32-bit lane)
-      const size_t elem = index >> 2;    // index within that lane stream
+      const size_t lane = index & 7;     // 0..7 (which 32-bit lane in __m256i)
+      const size_t elem = index >> 3;    // index within that lane stream
 
       const uint64_t bitpos = uint64_t(elem) * b;
       const uint32_t word   = uint32_t(bitpos >> 5);  // 32-bit word index within lane stream
       const uint32_t shift  = uint32_t(bitpos & 31);
 
-      const size_t w0 = size_t(word) * 4 + lane;
+      const size_t w0 = size_t(word) * 8 + lane;
 
       uint64_t val = uint64_t(input[w0]) >> shift;
 
       if (shift + b > 32) {
-          const size_t w1 = w0 + 4; // next word in SAME lane (next __m128i)
+          const size_t w1 = w0 + 8; // next word in SAME lane (next __m256i)
           val |= uint64_t(input[w1]) << (32 - shift);
       }
 
@@ -335,7 +338,7 @@ public:
         &i, // i points to value of the first exception
     const DATATYPE *__restrict__ end_exception,
     size_t next_exception // points to the position of the first exception
-    , __m128i* sum, int32_t* delta_sum)
+    , __m256i* sum, int32_t* delta_sum)
   {
     const auto start = inputbegin;
 

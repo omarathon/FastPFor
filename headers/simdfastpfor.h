@@ -93,9 +93,9 @@ public:
     ++in;
     out.resize((size + 32 - 1) / 32 * 32);
     uint32_t j = 0;
-    for (; j + 128 <= size; j += 128) {
-      usimdunpack(reinterpret_cast<const __m128i *>(in), &out[j], bit);
-      in += 4 * bit;
+    for (; j + 256 <= size; j += 256) {
+      usimdunpack(reinterpret_cast<const __m256i *>(in), &out[j], bit);
+      in += 8 * bit;
     }
     for (; j + 31 < size; j += 32) {
       fastunpack(in, &out[j], bit);
@@ -125,9 +125,9 @@ public:
       return out;
     source.resize((source.size() + 32 - 1) / 32 * 32);
     uint32_t j = 0;
-    for (; j + 128 <= size; j += 128) {
-      usimdpackwithoutmask(&source[j], reinterpret_cast<__m128i *>(out), bit);
-      out += 4 * bit;
+    for (; j + 256 <= size; j += 256) {
+      usimdpackwithoutmask(&source[j], reinterpret_cast<__m256i *>(out), bit);
+      out += 8 * bit;
     }
     for (; j < size; j += 32) {
       fastpackwithoutmask(&source[j], out, bit);
@@ -502,8 +502,7 @@ public:
           }
         }
       }
-      assert(BlockSize == 128);
-      usimdpack(in, reinterpret_cast<__m128i *>(out), bestb);
+      usimdpack(in, reinterpret_cast<__m256i *>(out), bestb);
       out += BlockSizeInUnitsOfPackSize * bestb;
       // out = packblockup<BlockSize>(in, out, bestb);
     }
@@ -545,8 +544,7 @@ public:
       const uint8_t b = *bytep++;
       const uint8_t cexcept = *bytep++;
       // in = unpackblock<BlockSize>(in, out, b);
-      assert(BlockSize == 128);
-      usimdunpack(reinterpret_cast<const __m128i *>(in), out, b);
+      usimdunpack(reinterpret_cast<const __m256i *>(in), out, b);
       in += BlockSizeInUnitsOfPackSize * b;
       for (uint32_t k = 0; k < cexcept; ++k) {
         const uint8_t pos = *(bytep++);

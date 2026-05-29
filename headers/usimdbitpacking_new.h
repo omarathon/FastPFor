@@ -11,8 +11,8 @@
 
 namespace FastPForLib {
 
-void usimdunpack_new(const __m128i *__restrict__ in, uint32_t *__restrict__ out,
-                 uint32_t bit, __m128i *__restrict__ sum);
+void usimdunpack_new(const __m256i *__restrict__ in, uint32_t *__restrict__ out,
+                 uint32_t bit, __m256i *__restrict__ sum);
 
 } // namespace FastPForLib
 
