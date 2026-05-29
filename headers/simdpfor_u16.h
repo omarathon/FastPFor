@@ -46,14 +46,8 @@ public:
         : 0.0;
   }
 
-  // `blockSize` is the size of the PFor block the exception gap-chain runs over
-  // (compulsory exceptions are inserted every 2^b positions within a block).
-  // Non-flat path: BlockSize (256). Flat path: the sub-block window_size.
-  // NOTE: upstream 32-bit simdpfor.h hardcodes 128 here = its BlockSize; the
-  // u16 port must use the u16 block size, hence this parameter.
   static uint32_t determineBestBase(const DATATYPE *in, size_t size,
-                                    double penalty = 16.0,
-                                    size_t blockSize = BlockSize) {
+                                    double penalty = 16.0) {
     if (size == 0)
       return 0;
     const size_t defaultsamplesize = 64 * 1024;
@@ -77,7 +71,7 @@ public:
       Erate = static_cast<double>(numberofexceptions) /
               static_cast<double>(samplesize);
       if (numberofexceptions > 0) {
-        double altErate = (Erate * static_cast<double>(blockSize) - 1) /
+        double altErate = (Erate * 128 - 1) /
                           (Erate * (1U << b));
         if (altErate > Erate)
           Erate = altErate;
@@ -321,11 +315,12 @@ public:
       for (size_t r = 0; r < n_outreg; ++r)
         _mm256_store_si256(cd + r, anchor_bcast);
     }
+    const uint16_t *exc16 = reinterpret_cast<const uint16_t *>(except_base);
     const uint16_t *packed_data = reinterpret_cast<const uint16_t *>(inputbegin);
     for (size_t idx = start_except_idx; idx != end_except_idx; ++idx) {
       const uint32_t gap =
           read_gap_simd_layout_u16(packed_data, b, next_exception);
-      const uint16_t exc_val = static_cast<uint16_t>(except_base[idx]);
+      const uint16_t exc_val = exc16[idx];
       corrections_data[next_exception] +=
           static_cast<uint16_t>(exc_val - static_cast<uint16_t>(gap));
       next_exception = next_exception + static_cast<size_t>(gap) + 1;
@@ -669,8 +664,7 @@ public:
     uint8_t bs_buf[2048];
     for (size_t k = 0; k < n_blocks; ++k)
       bs_buf[k] = static_cast<uint8_t>(
-          determineBestBase(in + k * window_size, window_size, exceptionPenalty_,
-                            window_size));
+          determineBestBase(in + k * window_size, window_size, exceptionPenalty_));
 
     // Step 2: total payload words — needed to locate exception area upfront
     // Payload for W-element block at b bits: ceil(W*b/256) * 8 uint32 words.
@@ -692,8 +686,11 @@ public:
     uint32_t *headers_ptr = out;
     out += n_blocks;
 
-    // Exception area starts at a known offset past all payloads
-    uint32_t *except_out = out + total_payload_words;
+    // Exception area starts at a known offset past all payloads. Data is uint16,
+    // so each exception value is a uint16 — pack them 2 per uint32 word (half the
+    // space of one-per-u32). Both flat decoders read them back via a uint16 view.
+    uint32_t *const except_area = out + total_payload_words;
+    uint16_t *except_out = reinterpret_cast<uint16_t *>(except_area);
     size_t cumulative_exc = 0;
 
     const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
@@ -710,20 +707,22 @@ public:
       headers_ptr[k] = (firstexcept & firstexceptmask) |
                        (static_cast<uint32_t>(cumulative_exc) << blocksizeinbits);
       for (size_t e = 0; e < block_exc; ++e)
-        *except_out++ = static_cast<uint32_t>(per_block_exc[e]);
+        *except_out++ = per_block_exc[e];
     }
+    // Zero-pad the trailing half-word so the final uint32 is fully defined.
+    if (cumulative_exc & 1)
+      *except_out = 0;
 
     total_exceptions_encoded_ += cumulative_exc;
     total_blocks_encoded_     += n_blocks;
-    nvalue = static_cast<size_t>(except_out - initout);
+    // Exception stream occupies ceil(cumulative_exc / 2) uint32 words.
+    nvalue = static_cast<size_t>(except_area - initout) + (cumulative_exc + 1) / 2;
   }
 
-  // Flat-format decode for corrected (non-FoR) path. window_size selects the
-  // sub-block width (must match the value passed to encodeArrayFlat).
+  // Flat-format decode for corrected (non-FoR) path.
   const uint32_t *decodeArrayFlatCorrected(const uint32_t *in,
                                             const size_t /*len*/,
-                                            uint16_t *out, size_t &nvalue,
-                                            size_t window_size = BlockSize) {
+                                            uint16_t *out, size_t &nvalue) {
     uint16_t *initout = out;
     __m256i sum = _mm256_setzero_si256();
 
@@ -735,11 +734,9 @@ public:
     in += n_blocks;
     const uint32_t *payload_base = in;
 
-    // Payload per block padded up to a whole 256-bit (8-u32) SIMD unit, matching
-    // encodeArrayFlat's sizing.
     size_t total_payload_words = 0;
     for (size_t k = 0; k < n_blocks; ++k)
-      total_payload_words += ((window_size * static_cast<size_t>(bs[k]) + 255) / 256) * 8;
+      total_payload_words += (BlockSize * static_cast<size_t>(bs[k])) / 32;
     const uint32_t *except_base = payload_base + total_payload_words;
 
     const uint32_t firstexceptmask = (1U << blocksizeinbits) - 1;
@@ -755,13 +752,13 @@ public:
       uncompressblockPFOR_u16_corrected_nW(payload_ptr, out, b,
                                             except_base, except_offset,
                                             exceptindex, firstexcept, &sum,
-                                            window_size);
+                                            BlockSize);
       except_offset = exceptindex;
-      payload_ptr  += ((window_size * b + 255) / 256) * 8;
-      out          += window_size;
+      payload_ptr  += (BlockSize * b) / 32;
+      out          += BlockSize;
     }
 
-    nvalue = n_blocks * window_size;
+    nvalue = n_blocks * BlockSize;
 
     __m128i lo = _mm256_castsi256_si128(sum);
     __m128i hi = _mm256_extracti128_si256(sum, 1);
@@ -828,7 +825,8 @@ public:
     initout[nvalue]     = static_cast<uint16_t>(out_sum & 0xFFFF);
     initout[nvalue + 1] = static_cast<uint16_t>(out_sum >> 16);
 
-    return except_base + except_offset;
+    // Exceptions are packed 2 uint16 per uint32 word.
+    return except_base + (except_offset + 1) / 2;
   }
 
   void __encodeArray(const uint16_t *in, const size_t len, uint32_t *out,
